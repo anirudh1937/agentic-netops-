@@ -2,5 +2,5 @@ fastapi==0.141.1
 uvicorn[standard]==0.30.6
 pytest==8.4.2
 httpx
-mcp==2.0.0
+mcp==1.29.1
 google-adk==2.7.1

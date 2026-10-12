@@ -13,3 +13,13 @@ def test_root():
     assert response.json() == {
         "message": "Agentic NetOps is running"
     }
+
+
+def test_health_check():
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "service": "agentic-netops",
+    }

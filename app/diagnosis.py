@@ -1,19 +1,34 @@
+from typing import Literal
+
+from pydantic import BaseModel
+
 from app.telemetry import NetworkTelemetry
 from app.anomaly import detect_anomalies
+
+
+class DiagnosisResult(BaseModel):
+    device_id: str
+    interface: str
+    severity: Literal["normal", "medium", "high"]
+    diagnosis: str
+    anomalies: list[str]
+    evidence: list[str]
+    recommendation: str
 
 
 def diagnose_network_issue(telemetry: NetworkTelemetry) -> dict:
     anomalies = detect_anomalies(telemetry)
 
     if not anomalies:
-        return {
-            "device_id": telemetry.device_id,
-            "interface": telemetry.interface,
-            "severity": "normal",
-            "diagnosis": "No significant network anomaly detected.",
-            "evidence": [],
-            "recommendation": "Continue monitoring.",
-        }
+        return DiagnosisResult(
+            device_id=telemetry.device_id,
+            interface=telemetry.interface,
+            severity="normal",
+            diagnosis="No significant network anomaly detected.",
+            anomalies=[],
+            evidence=[],
+            recommendation="Continue monitoring.",
+        ).model_dump()
 
     evidence = []
     recommendations = []
@@ -24,6 +39,14 @@ def diagnose_network_issue(telemetry: NetworkTelemetry) -> dict:
         )
         recommendations.append(
             "Inspect CPU-intensive processes and device resource utilization."
+        )
+
+    if "high_memory" in anomalies:
+        evidence.append(
+            f"Memory utilization is {telemetry.memory_percent}%."
+        )
+        recommendations.append(
+            "Inspect memory-intensive processes and device memory utilization."
         )
 
     if "high_packet_loss" in anomalies:
@@ -48,12 +71,12 @@ def diagnose_network_issue(telemetry: NetworkTelemetry) -> dict:
             "Check interface configuration, link status, and physical connectivity."
         )
 
-    return {
-        "device_id": telemetry.device_id,
-        "interface": telemetry.interface,
-        "severity": "high" if len(anomalies) >= 2 else "medium",
-        "diagnosis": "Network health degradation detected.",
-        "anomalies": anomalies,
-        "evidence": evidence,
-        "recommendation": " ".join(recommendations),
-    }
+    return DiagnosisResult(
+        device_id=telemetry.device_id,
+        interface=telemetry.interface,
+        severity="high" if len(anomalies) >= 2 else "medium",
+        diagnosis="Network health degradation detected.",
+        anomalies=anomalies,
+        evidence=evidence,
+        recommendation=" ".join(recommendations),
+    ).model_dump()

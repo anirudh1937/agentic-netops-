@@ -27,6 +27,7 @@ def test_healthy_network():
 
     assert result["severity"] == "normal"
     assert result["diagnosis"] == "No significant network anomaly detected."
+    assert result["anomalies"] == []
     assert result["evidence"] == []
     assert result["recommendation"] == "Continue monitoring."
 
@@ -39,6 +40,17 @@ def test_high_cpu_diagnosis():
     assert result["severity"] == "medium"
     assert "high_cpu" in result["anomalies"]
     assert "CPU utilization is 95.0%." in result["evidence"]
+
+
+def test_high_memory_diagnosis():
+    telemetry = make_telemetry(memory_percent=91)
+
+    result = diagnose_network_issue(telemetry)
+
+    assert result["severity"] == "medium"
+    assert "high_memory" in result["anomalies"]
+    assert "Memory utilization is 91.0%." in result["evidence"]
+    assert "Inspect memory-intensive processes" in result["recommendation"]
 
 
 def test_multiple_anomalies_produce_high_severity():

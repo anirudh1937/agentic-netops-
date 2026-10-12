@@ -16,6 +16,8 @@ lab environments.
 3. Configure any required model credentials in `.env`.
 4. Run the app:
    `uvicorn app.main:app --reload`
+5. Open the dashboard:
+   `http://127.0.0.1:8000/dashboard`
 
 ## Run tests
 
@@ -71,6 +73,33 @@ Request:
 }
 ```
 
+### `POST /diagnose`
+
+Runs the deterministic rule-based diagnosis engine and returns structured
+output for dashboards and automation.
+
+Successful response:
+
+```json
+{
+  "device_id": "router-01",
+  "interface": "GigabitEthernet0/1",
+  "severity": "high",
+  "diagnosis": "Network health degradation detected.",
+  "anomalies": [
+    "high_cpu",
+    "high_packet_loss",
+    "high_latency"
+  ],
+  "evidence": [
+    "CPU utilization is 92.0%.",
+    "Packet loss is 5.0%.",
+    "Latency is 150.0 ms."
+  ],
+  "recommendation": "Inspect CPU-intensive processes and device resource utilization. Inspect interface errors, congestion, and link quality. Investigate congestion, routing path, and interface performance."
+}
+```
+
 ### `POST /analyze`
 
 Runs the ADK agent against telemetry and returns a stable API response.
@@ -108,6 +137,17 @@ usable by dashboards, automation jobs, and future sandbox integrations.
 The MCP server exposes `check_device_health`, which analyzes the same telemetry
 shape and returns device health plus detected anomalies. The ADK agent can use
 both the local diagnosis tool and the MCP tool when producing analysis.
+
+## Dashboard
+
+The built-in dashboard is available at `/dashboard`. It provides:
+
+- telemetry input for device, interface, utilization, packet loss, latency, and
+  interface state
+- deterministic diagnosis summary with severity, anomalies, evidence, and
+  recommendation
+- agent explanation panel for plain-English operational analysis
+- backend health indicator
 
 ## Project structure
 

@@ -1,3 +1,5 @@
+import sys
+
 from dotenv import load_dotenv
 from google.adk.agents import Agent
 from google.adk.tools.mcp_tool.mcp_toolset import (
@@ -15,7 +17,7 @@ load_dotenv()
 mcp_toolset = McpToolset(
     connection_params=StdioConnectionParams(
         server_params=StdioServerParameters(
-            command="python",
+            command=sys.executable,
             args=["-m", "app.mcp.server"],
         ),
         timeout=10.0,

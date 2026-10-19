@@ -14,14 +14,18 @@
       --accent: #0f6f6b;
       --accent-dark: #0a514e;
       --ok: #16794c;
+      --ok-bg: #e8f5ee;
       --medium: #9a5b00;
+      --medium-bg: #fff2d9;
       --high: #b42318;
+      --high-bg: #fde8e7;
+      --neutral: #5d6978;
+      --neutral-bg: #eef2f6;
       --surface: #eef2f6;
+      --shadow: 0 1px 2px rgba(16, 32, 42, .06), 0 1px 3px rgba(16, 32, 42, .08);
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
@@ -31,9 +35,14 @@
       line-height: 1.45;
     }
 
+    a { color: var(--accent-dark); }
+
     header {
       border-bottom: 1px solid var(--line);
       background: var(--panel);
+      position: sticky;
+      top: 0;
+      z-index: 20;
     }
 
     .topbar {
@@ -41,18 +50,13 @@
       align-items: center;
       justify-content: space-between;
       gap: 16px;
-      max-width: 1320px;
-      min-height: 72px;
+      max-width: 1360px;
+      min-height: 70px;
       margin: 0 auto;
       padding: 14px 24px;
     }
 
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      min-width: 0;
-    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
     .mark {
       display: grid;
@@ -64,13 +68,10 @@
       background: #e6f3f2;
       color: var(--accent-dark);
       font-weight: 800;
+      flex: 0 0 auto;
     }
 
-    h1 {
-      margin: 0;
-      font-size: 22px;
-      font-weight: 700;
-    }
+    h1 { margin: 0; font-size: 22px; font-weight: 700; }
 
     .subtitle {
       margin: 2px 0 0;
@@ -81,11 +82,11 @@
     .health {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      min-height: 36px;
-      padding: 0 12px;
+      gap: 10px;
+      min-height: 38px;
+      padding: 6px 14px;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 999px;
       background: #fbfcfd;
       color: var(--muted);
       font-size: 13px;
@@ -93,33 +94,76 @@
     }
 
     .dot {
-      width: 9px;
-      height: 9px;
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
       background: #98a2b3;
+      flex: 0 0 auto;
     }
 
-    .dot.ok {
-      background: var(--ok);
+    .dot.ok { background: var(--ok); }
+    .dot.warn { background: var(--medium); }
+    .dot.bad { background: var(--high); }
+
+    .topbar-actions { display: flex; align-items: center; gap: 10px; }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      gap: 4px;
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 0 24px;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .nav-item {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-weight: 650;
+      font-size: 14px;
+      padding: 12px 16px;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      white-space: nowrap;
+      min-height: 44px;
+    }
+
+    .nav-item:hover { color: var(--accent-dark); }
+
+    .nav-item.active {
+      color: var(--accent-dark);
+      border-bottom-color: var(--accent);
     }
 
     main {
-      max-width: 1320px;
+      max-width: 1360px;
       margin: 0 auto;
-      padding: 22px 24px 32px;
+      padding: 24px 24px 40px;
     }
 
-    .layout {
-      display: grid;
-      grid-template-columns: minmax(330px, 430px) minmax(0, 1fr);
-      gap: 18px;
-      align-items: start;
-    }
+    .view { display: none; }
+    .view.active { display: block; animation: fade .18s ease; }
 
-    section {
+    @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+
+    /* ---- Layout helpers ---- */
+    .grid { display: grid; gap: 18px; }
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    section.panel {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
     }
 
     .section-head {
@@ -127,35 +171,51 @@
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      min-height: 54px;
-      padding: 14px 16px;
+      padding: 16px 18px;
       border-bottom: 1px solid var(--line);
     }
 
-    h2 {
-      margin: 0;
-      font-size: 16px;
+    .section-head h2 { margin: 0; font-size: 16px; font-weight: 700; }
+
+    .content { padding: 18px; }
+
+    .hint { color: var(--muted); font-size: 12px; }
+
+    /* ---- Buttons ---- */
+    button.action,
+    button.secondary,
+    button.primary {
+      min-height: 40px;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      background: var(--accent);
+      color: white;
+      cursor: pointer;
+      font: inherit;
       font-weight: 700;
+      padding: 0 16px;
     }
 
-    .hint {
-      color: var(--muted);
-      font-size: 12px;
+    button.secondary {
+      background: #ffffff;
+      color: var(--accent-dark);
     }
 
-    form {
-      display: grid;
-      gap: 14px;
-      padding: 16px;
+    button:disabled {
+      border-color: #aab3bf;
+      background: #aab3bf;
+      color: #fff;
+      cursor: wait;
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
+    button.ghost {
+      background: transparent;
+      border-color: var(--line);
+      color: var(--accent-dark);
     }
 
-    label {
+    /* ---- Select / inputs ---- */
+    label.field {
       display: grid;
       gap: 6px;
       color: var(--muted);
@@ -163,8 +223,7 @@
       font-weight: 650;
     }
 
-    input,
-    select {
+    input, select {
       width: 100%;
       min-height: 40px;
       padding: 9px 10px;
@@ -176,183 +235,220 @@
       font-size: 14px;
     }
 
-    input:focus,
-    select:focus {
+    input:focus, select:focus {
       outline: 3px solid #c8e5e3;
       border-color: var(--accent);
     }
 
-    .actions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-top: 4px;
-    }
+    form.input { display: grid; gap: 14px; }
+    form.input .grid { gap: 12px; }
 
-    button {
-      min-height: 42px;
-      border: 1px solid var(--accent);
-      border-radius: 6px;
-      background: var(--accent);
-      color: white;
-      cursor: pointer;
-      font: inherit;
-      font-weight: 700;
-    }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
-    button.secondary {
-      background: #ffffff;
-      color: var(--accent-dark);
-    }
-
-    button:disabled {
-      border-color: #aab3bf;
-      background: #aab3bf;
-      cursor: wait;
-    }
-
-    .results {
-      display: grid;
-      gap: 18px;
-    }
-
-    .summary {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-      padding: 16px;
-    }
-
-    .metric {
-      min-height: 86px;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fbfcfd;
-    }
-
-    .metric span {
-      display: block;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
-    }
-
-    .metric strong {
-      display: block;
-      margin-top: 8px;
-      font-size: 20px;
-      overflow-wrap: anywhere;
-    }
-
+    /* ---- Badges ---- */
     .badge {
       display: inline-flex;
       align-items: center;
-      min-height: 28px;
-      padding: 0 10px;
+      gap: 6px;
+      min-height: 26px;
+      padding: 3px 10px;
       border-radius: 999px;
       font-weight: 800;
+      font-size: 11px;
       text-transform: uppercase;
-      font-size: 12px;
-      letter-spacing: 0;
+      letter-spacing: .03em;
     }
 
-    .badge.normal {
-      background: #e8f5ee;
-      color: var(--ok);
-    }
+    .badge.normal { background: var(--ok-bg); color: var(--ok); }
+    .badge.medium { background: var(--medium-bg); color: var(--medium); }
+    .badge.high { background: var(--high-bg); color: var(--high); }
+    .badge.neutral { background: var(--neutral-bg); color: var(--neutral); }
+    .badge.ok { background: var(--ok-bg); color: var(--ok); }
+    .badge.muted { background: var(--neutral-bg); color: var(--muted); }
 
-    .badge.medium {
-      background: #fff2d9;
-      color: var(--medium);
-    }
-
-    .badge.high {
-      background: #fde8e7;
-      color: var(--high);
-    }
-
-    .content {
+    /* ---- KPI cards ---- */
+    .kpi {
       padding: 16px;
-      border-top: 1px solid var(--line);
-    }
-
-    .split {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-
-    .block {
-      min-height: 160px;
-      padding: 14px;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 10px;
       background: #fbfcfd;
     }
 
-    h3 {
-      margin: 0 0 10px;
-      font-size: 14px;
+    .kpi span { display: block; color: var(--muted); font-size: 12px; font-weight: 650; }
+    .kpi .value { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .kpi .value strong { font-size: 20px; overflow-wrap: anywhere; }
+    .kpi .value .dot { box-shadow: 0 0 0 3px #fbfcfd; }
+
+    /* ---- Vendor connectivity cards ---- */
+    .vendor-card {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fbfcfd;
+      display: grid;
+      gap: 12px;
     }
 
-    ul {
-      margin: 0;
-      padding-left: 18px;
+    .vendor-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
     }
 
-    li {
-      margin: 8px 0;
+    .vendor-card-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
+
+    .vendor-meta { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+    .vendor-meta b { color: var(--text); font-weight: 650; }
+
+    .vendor-status { font-size: 12px; }
+
+    /* ---- Tables ---- */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    tbody tr:last-child td { border-bottom: 0; }
+    table.wide td, table.wide th { white-space: normal; }
+
+    /* ---- Gauges ---- */
+    .gauge {
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fbfcfd;
+      display: grid;
+      gap: 8px;
+      min-height: 92px;
+    }
+    .gauge-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+    .gauge-value { font-size: 18px; font-weight: 800; overflow-wrap: anywhere; }
+    .gauge-value .unit { font-size: 12px; font-weight: 600; color: var(--muted); }
+    .gauge-value.notavail { color: var(--muted); font-weight: 600; font-style: italic; font-size: 14px; }
+
+    .gauge-track {
+      height: 8px;
+      border-radius: 999px;
+      background: #e2e8ef;
+      overflow: hidden;
+    }
+    .gauge-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width .3s ease;
+    }
+
+    .telemetry-meta {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--neutral-bg);
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 18px;
+    }
+
+    /* ---- Alerts / diagnosis ---- */
+    .alert-row {
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--ok);
+      border-radius: 10px;
+      background: #fbfcfd;
+      margin-bottom: 12px;
+    }
+    .alert-row.high { border-left-color: var(--high); }
+    .alert-row.medium { border-left-color: var(--medium); }
+    .alert-row.normal { border-left-color: var(--neutral); }
+
+    .alert-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .alert-head .device { font-weight: 700; font-size: 14px; }
+    .alert-head .iface { color: var(--muted); font-size: 12px; }
+    .alert-head .time { color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+    .alerts-list h3 { margin: 14px 0 6px; font-size: 13px; font-weight: 700; }
+    .alerts-list ul { margin: 0; padding-left: 18px; }
+    .alerts-list li { margin: 5px 0; font-size: 13px; }
+
+    .evidence-block {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 8px;
+      background: var(--neutral-bg);
+    }
+    .evidence-block h4 { margin: 0 0 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .evidence-block ol { margin: 0; padding-left: 18px; }
+    .evidence-block li { margin: 4px 0; font-size: 13px; }
+
+    /* ---- Toast / notice ---- */
+    .notice {
+      display: none;
+      margin: 0 0 16px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #fff2d9;
+      color: #704100;
+      border: 1px solid #ffd58a;
+      font-size: 13px;
+    }
+    .notice.show { display: block; }
+    .notice.error { background: #fde8e7; color: #7a120b; border-color: #f7b4ad; }
+    .notice.success { background: var(--ok-bg); color: #0e4f36; border-color: #a6ddc0; }
+
+    /* ---- Empty / state placeholders ---- */
+    .state {
+      display: grid;
+      place-items: center;
+      gap: 8px;
+      min-height: 160px;
+      padding: 24px;
+      text-align: center;
+      color: var(--muted);
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      background: #fbfcfd;
+    }
+    .state.lead { font-weight: 700; color: var(--text); }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: var(--neutral-bg);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
     }
 
     .analysis {
       min-height: 140px;
       white-space: pre-wrap;
       color: #25313f;
+      font-size: 14px;
     }
 
-    .empty {
-      color: var(--muted);
+    .divider { height: 1px; background: var(--line); margin: 16px 0; border: 0; }
+
+    /* ---- Responsive ---- */
+    @media (max-width: 1080px) {
+      .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid.cols-2 { grid-template-columns: minmax(0, 1fr); }
     }
 
-    .notice {
-      display: none;
-      margin: 0 16px 16px;
-      padding: 12px;
-      border-radius: 8px;
-      background: #fff2d9;
-      color: #704100;
-      border: 1px solid #ffd58a;
-    }
-
-    .notice.show {
-      display: block;
-    }
-
-    @media (max-width: 980px) {
-      .layout,
-      .split,
-      .summary {
-        grid-template-columns: 1fr;
-      }
-
-      .topbar {
-        align-items: flex-start;
-        flex-direction: column;
-      }
-    }
-
-    @media (max-width: 620px) {
-      main,
-      .topbar {
-        padding-left: 14px;
-        padding-right: 14px;
-      }
-
-      .grid,
-      .actions {
-        grid-template-columns: 1fr;
-      }
+    @media (max-width: 720px) {
+      .topbar { flex-direction: column; align-items: flex-start; gap: 10px; min-height: auto; padding: 12px 16px; }
+      .topbar-actions { width: 100%; }
+      .topbar-actions button { flex: 1; }
+      main { padding: 18px 16px 32px; }
+      .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
+      table.wide { display: block; overflow-x: auto; }
     }
   </style>
 </head>
@@ -366,235 +462,894 @@
           <p class="subtitle">Telemetry diagnosis and AI-assisted network operations</p>
         </div>
       </div>
-      <div class="health" id="health"><span class="dot"></span><span>Checking service</span></div>
+      <div class="topbar-actions">
+        <div class="health" id="health"><span class="dot"></span><span>Checking service…</span></div>
+        <button class="secondary" id="refresh-btn" type="button">Refresh</button>
+      </div>
     </div>
+
+    <nav class="nav" id="nav" aria-label="Dashboard sections">
+      <button class="nav-item active" data-tab="overview">Overview</button>
+      <button class="nav-item" data-tab="devices">Devices</button>
+      <button class="nav-item" data-tab="telemetry">Telemetry</button>
+      <button class="nav-item" data-tab="alerts">Alerts &amp; Diagnosis</button>
+      <button class="nav-item" data-tab="ai">AI Troubleshooting</button>
+      <button class="nav-item" data-tab="integrations">Integrations</button>
+    </nav>
   </header>
 
   <main>
-    <div class="layout">
-      <section>
-        <div class="section-head">
-          <h2>Telemetry Input</h2>
-          <span class="hint">Rule engine first, agent second</span>
-        </div>
-        <form id="telemetry-form">
-          <div class="grid">
-            <label>Device ID
-              <input name="device_id" value="router-01" required>
-            </label>
-            <label>Interface
-              <input name="interface" value="GigabitEthernet0/1" required>
-            </label>
-          </div>
-          <label>Timestamp
-            <input name="timestamp" value="2026-08-25T00:00:00Z" required>
-          </label>
-          <div class="grid">
-            <label>CPU %
-              <input name="cpu_percent" type="number" min="0" max="100" step="0.1" value="92" required>
-            </label>
-            <label>Memory %
-              <input name="memory_percent" type="number" min="0" max="100" step="0.1" value="60" required>
-            </label>
-            <label>Bandwidth Mbps
-              <input name="bandwidth_mbps" type="number" min="0" step="0.1" value="100" required>
-            </label>
-            <label>Packet Loss %
-              <input name="packet_loss_percent" type="number" min="0" max="100" step="0.1" value="5" required>
-            </label>
-            <label>Latency ms
-              <input name="latency_ms" type="number" min="0" step="0.1" value="150" required>
-            </label>
-            <label>Interface Status
-              <select name="interface_status">
-                <option value="up">up</option>
-                <option value="down">down</option>
-              </select>
-            </label>
-          </div>
-          <div class="actions">
-            <button type="submit" id="diagnose-btn">Run Diagnosis</button>
-            <button type="button" class="secondary" id="analyze-btn">Ask Agent</button>
-          </div>
-        </form>
-        <div class="notice" id="notice"></div>
-      </section>
+    <!-- ===================== OVERVIEW ===================== -->
+    <section class="view active" id="view-overview">
+      <div class="grid cols-4" id="kpis" style="margin-bottom:18px;"></div>
 
-      <div class="results">
-        <section>
+      <div class="grid cols-2">
+        <section class="panel">
           <div class="section-head">
-            <h2>Diagnosis Summary</h2>
-            <span class="hint" id="result-time">Waiting for telemetry</span>
+            <h2>Device connectivity</h2>
+            <span class="hint" id="overview-updated">—</span>
           </div>
-          <div class="summary">
-            <div class="metric">
-              <span>Device</span>
-              <strong id="device">-</strong>
-            </div>
-            <div class="metric">
-              <span>Interface</span>
-              <strong id="interface">-</strong>
-            </div>
-            <div class="metric">
-              <span>Severity</span>
-              <strong><span class="badge normal" id="severity">normal</span></strong>
-            </div>
-            <div class="metric">
-              <span>Anomalies</span>
-              <strong id="anomaly-count">0</strong>
-            </div>
+          <div class="content"><div class="grid cols-2" id="vendor-cards"></div></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>Active anomalies</h2>
+            <span class="hint">From live vendor telemetry</span>
           </div>
-          <div class="content split">
-            <div class="block">
-              <h3>Evidence</h3>
-              <ul id="evidence"><li class="empty">Run diagnosis to populate evidence.</li></ul>
+          <div class="content" id="alerts-overview"><div class="state">Loading…</div></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ===================== DEVICES ===================== -->
+    <section class="view" id="view-devices">
+      <section class="panel">
+        <div class="section-head">
+          <h2>Device inventory</h2>
+          <span class="hint" id="devices-updated">—</span>
+        </div>
+        <div class="content">
+          <div class="actions" style="margin-bottom:16px;">
+            <div class="field" style="max-width:240px;">
+              <label for="device-filter">Vendor filter</label>
+              <select id="device-filter"><option value="all">All vendors</option></select>
             </div>
-            <div class="block">
-              <h3>Recommended Action</h3>
-              <p id="recommendation" class="empty">Run diagnosis to see recommendations.</p>
+            <button class="ghost" id="device-refresh" type="button">Refresh inventory</button>
+          </div>
+          <div id="device-list"><div class="state">Loading inventory…</div></div>
+        </div>
+      </section>
+    </section>
+
+    <!-- ===================== TELEMETRY ===================== -->
+    <section class="view" id="view-telemetry">
+      <section class="panel">
+        <div class="section-head">
+          <h2>Live device telemetry</h2>
+          <span class="hint">Read-only RESTCONF from configured devices</span>
+        </div>
+        <div class="content">
+          <form class="input" id="telemetry-fetch-form">
+            <div class="grid cols-2">
+              <div class="field">
+                <label for="tel-vendor">Vendor</label>
+                <select id="tel-vendor"></select>
+              </div>
+              <div class="field">
+                <label for="tel-interface">Interface</label>
+                <select id="tel-interface"><option value="">(device default)</option></select>
+              </div>
             </div>
+            <div class="actions">
+              <button type="submit" id="tel-fetch-btn">Fetch live telemetry</button>
+              <button type="button" class="secondary" id="tel-refresh">Refresh</button>
+            </div>
+          </form>
+          <div class="notice" id="telemetry-notice"></div>
+          <div id="telemetry-body" style="margin-top:18px;"><div class="state">Select a vendor and fetch telemetry.</div></div>
+        </div>
+      </section>
+    </section>
+
+    <!-- ===================== ALERTS ===================== -->
+    <section class="view" id="view-alerts">
+      <section class="panel">
+        <div class="section-head">
+          <h2>Alerts &amp; Diagnosis</h2>
+          <span class="hint">Deterministic rule engine output</span>
+        </div>
+        <div class="content">
+          <div class="actions" style="margin-bottom:16px;">
+            <button class="primary" id="alerts-fetch-btn" type="button">Refresh alerts</button>
+            <span class="hint">Severity from the same anomaly detector used by the API.</span>
+          </div>
+          <div id="alerts-list"><div class="state">Loading…</div></div>
+        </section>
+      </section>
+    </section>
+
+    <!-- ===================== AI TROUBLESHOOTING ===================== -->
+    <section class="view" id="view-ai">
+      <div class="grid cols-2">
+        <section class="panel">
+          <div class="section-head">
+            <h2>Manual / synthetic telemetry</h2>
+            <span class="tag">Rule engine only</span>
+          </div>
+          <div class="content">
+            <p class="hint" style="margin-top:-4px;">
+              Enter synthetic or manually observed values to exercise the rule engine.
+              This is <b>not</b> a live device read. Use <b>Telemetry</b> for live data.
+            </p>
+            <form class="input" id="ai-form">
+              <div class="grid cols-2">
+                <div class="field">Device ID
+                  <input name="device_id" value="router-01" required>
+                </div>
+                <div class="field">Interface
+                  <input name="interface" value="GigabitEthernet0/1" required>
+                </div>
+              </div>
+              <div class="grid cols-2">
+                <div class="field">CPU %
+                  <input name="cpu_percent" type="number" min="0" max="100" step="0.1" value="92" required>
+                </div>
+                <div class="field">Memory %
+                  <input name="memory_percent" type="number" min="0" max="100" step="0.1" value="60" required>
+                </div>
+              </div>
+              <div class="grid cols-2">
+                <div class="field">Packet Loss %
+                  <input name="packet_loss_percent" type="number" min="0" max="100" step="0.1" value="5" required>
+                </div>
+                <div class="field">Latency ms
+                  <input name="latency_ms" type="number" min="0" step="0.1" value="150" required>
+                </div>
+              </div>
+              <div class="field">Interface Status
+                <select name="interface_status">
+                  <option value="up">up</option>
+                  <option value="down">down</option>
+                </select>
+              </div>
+              <div class="actions">
+                <button type="submit" id="ai-run-btn">Run Diagnosis</button>
+                <button type="button" class="secondary" id="ai-agent-btn">Ask Agent</button>
+              </div>
+            </form>
+            <div class="notice" id="ai-notice"></div>
           </div>
         </section>
 
-        <section>
+        <section class="panel">
           <div class="section-head">
-            <h2>Agent Explanation</h2>
-            <span class="hint">Plain-English operator view</span>
+            <h2>Diagnosis result</h2>
+            <span class="hint" id="ai-diag-time">Waiting for input</span>
           </div>
           <div class="content">
-            <div class="block analysis" id="analysis">Ask the agent after running or reviewing diagnosis.</div>
+            <div class="grid cols-2" style="margin-bottom:14px;">
+              <div class="kpi"><span>Severity</span><div class="value"><span class="badge normal" id="ai-severity">normal</span></div></div>
+              <div class="kpi"><span>Anomalies</span><div class="value"><strong id="ai-anomaly-count">0</strong></div></div>
+            </div>
+            <div class="evidence-block">
+              <h4>Evidence</h4>
+              <ul id="ai-evidence"><li class="hint">Run diagnosis to populate evidence.</li></ul>
+            </div>
+            <div class="evidence-block">
+              <h4>Recommended Action</h4>
+              <p id="ai-recommendation" class="hint" style="margin:0;">Run diagnosis to see recommendations.</p>
+            </div>
+            <hr class="divider">
+            <h3>AI explanation</h3>
+            <div class="block analysis" id="ai-analysis" style="min-height:120px;">Ask the agent after reviewing diagnosis.</div>
           </div>
         </section>
       </div>
-    </div>
+    </section>
+
+    <!-- ===================== INTEGRATIONS ===================== -->
+    <section class="view" id="view-integrations">
+      <div class="grid cols-3" style="margin-bottom:18px;" id="integr-status"></div>
+      <section class="panel">
+        <div class="section-head">
+          <h2>Vendor integration status</h2>
+          <span class="hint" id="integr-updated">—</span>
+        </div>
+        <div class="content"><div id="integr-table"></div></div>
+      </section>
+    </section>
   </main>
 
   <script>
-    const form = document.getElementById("telemetry-form");
-    const diagnoseBtn = document.getElementById("diagnose-btn");
-    const analyzeBtn = document.getElementById("analyze-btn");
-    const notice = document.getElementById("notice");
+    "use strict";
 
-    function telemetryPayload() {
+    // ----- shared state -----
+    const state = {
+      vendors: [],
+      integrations: null,
+      telemetry: {},       // keyed by vendor -> parsed /vendors/{v}/telemetry response
+      inventory: {},       // keyed by vendor -> inventory response
+      lastUpdated: null,
+    };
+
+    const els = (id) => document.getElementById(id);
+    const $ = (sel, root = document) => root.querySelector(sel);
+    const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+    // ----- HTTP helpers -----
+    async function getJson(url) {
+      const res = await fetch(url, { headers: { "Accept": "application/json" } });
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try { detail = (await res.json()).detail || detail; } catch (_) { /* ignore */ }
+        const err = new Error(detail || `Request failed with ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    }
+
+    async function postJson(url, payload) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        let detail = `HTTP ${res.status}`;
+        try { detail = JSON.parse(body).detail || detail; } catch (_) { detail = body || detail; }
+        const err = new Error(detail || `Request failed with ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    }
+
+    // ----- small render helpers -----
+    function setStatusBadge(state) {
+      const map = {
+        normal: "badge normal",
+        medium: "badge medium",
+        high: "badge high",
+      };
+      return `<span class="${map[state] || "badge neutral"}">${state || "unknown"}</span>`;
+    }
+
+    function interfaceStatusCell(status) {
+      const map = {
+        up: { label: "up", cls: "badge ok" },
+        down: { label: "down", cls: "badge high" },
+      };
+      const s = (status || "unknown").toLowerCase();
+      if (s === "up" || s === "down") {
+        return `<span class="badge ${map[s].cls}">${map[s].label}</span>`;
+      }
+      return `<span class="badge neutral">${s || "unknown"}</span>`;
+    }
+
+    function showToast(id, message, type) {
+      const el = els(id);
+      if (!el) return;
+      el.textContent = message;
+      el.className = "notice show" + (type ? " " + type : "");
+    }
+
+    function clearNotice(id) { showToast(id, "", null); }
+
+    // ----- health indicator -----
+    async function refreshHealth() {
+      const health = els("health");
+      try {
+        const data = await getJson("/health");
+        health.innerHTML = `<span class="dot ok"></span><span>${data.service}: ${data.status}</span>`;
+      } catch {
+        health.innerHTML = `<span class="dot bad"></span><span>Service unavailable</span>`;
+      }
+    }
+
+    function setBusy(button, busy, busyText) {
+      if (!button) return;
+      button.disabled = busy;
+      if (busy) button.dataset.label = button.textContent;
+      button.textContent = busy ? (busyText || "Working…") : button.dataset.label || button.textContent;
+    }
+
+    // ==========================================================
+    //  INTEGRATIONS (source of truth for most views)
+    // ==========================================================
+    async function loadIntegrations() {
+      state.integrations = await getJson("/integrations");
+      state.vendors = state.integrations.vendors || [];
+      renderKpis();
+      renderVendorCards();
+      renderIntegrations();
+    }
+
+    function overallNetworkState() {
+      const reachable = state.vendors.filter((v) => v.reachable === true);
+      if (state.vendors.length === 0) return "no-config";
+      if (reachable.length === 0) return "unreachable";
+      let worst = "healthy";
+      for (const v of reachable) {
+        const sev = (state.telemetry[v.vendor] && state.telemetry[v.vendor].severity) || "normal";
+        const rank = { healthy: 0, medium: 1, high: 2 };
+        if ((rank[sev] || 0) > (rank[worst] || 0)) worst = sev;
+      }
+      return worst;
+    }
+
+    function renderKpis() {
+      const integ = state.integrations || { backend: {}, agent: {}, mcp: {} };
+      const reachable = state.vendors.filter((v) => v.reachable === true).length;
+      let summary = "No vendors configured";
+
+      switch (overallNetworkState()) {
+        case "no-config": break;
+        case "unreachable": summary = "Vendors configured but unreachable"; break;
+        case "high": summary = "Critical issues detected"; break;
+        case "medium": summary = "Attention needed"; break;
+        default: summary = "All reachable devices healthy";
+      }
+
+      const kpis = [
+        {
+          title: "Network summary",
+          value: summary,
+          dot: "ok",
+        },
+        {
+          title: "Devices reachable",
+          value: `${reachable} / ${state.vendors.length}`,
+          dot: state.vendors.length && reachable ? "ok" : "neutral",
+        },
+        {
+          title: "LLM agent",
+          value: integ.agent.configured ? "Configured" : "Not configured",
+          dot: integ.agent.configured ? "ok" : "warn",
+        },
+        {
+          title: "MCP tooling",
+          value: integ.mcp.available ? "Available" : "Unavailable",
+          dot: integ.mcp.available ? "ok" : "warn",
+        },
+      ];
+
+      els("kpis").innerHTML = kpis.map((k) => `
+        <div class="kpi">
+          <span>${k.title}</span>
+          <div class="value"><span class="dot ${k.dot}"></span><strong>${k.value}</strong></div>
+        </div>`).join("");
+    }
+
+    function vendorStatusLabel(v) {
+      if (!v.configured) return { label: "Not configured", cls: "badge muted", dot: "neutral" };
+      if (v.reachable === true) return { label: "Connected", cls: "badge ok", dot: "ok" };
+      return { label: "Unreachable", cls: "badge high", dot: "bad" };
+    }
+
+    function renderVendorCards() {
+      const wrap = els("vendor-cards");
+      if (!state.vendors.length) {
+        wrap.innerHTML = `<div class="state">No vendors registered. Check backend configuration.</div>`;
+        return;
+      }
+      wrap.innerHTML = state.vendors.map((v) => {
+        const st = vendorStatusLabel(v);
+        return `
+        <div class="vendor-card">
+          <div class="vendor-card-head">
+            <h3>${v.label || v.vendor}</h3>
+            <span class="${st.cls}">${st.label}</span>
+          </div>
+          <div class="vendor-meta">
+            ${v.hostname ? `<span><b>Host</b>: ${esc(v.hostname)}</span>` : `<span class="hint">No hostname reported</span>`}
+            ${v.host ? `<span class="hint">mgmt: ${esc(v.host)}</span>` : ""}
+            ${v.interface_count ? `<span><b>${v.interface_count}</b> interfaces</span>` : `<span class="hint">interfaces: unavailable</span>`}
+            ${v.error ? `<span class="hint">${esc(v.error)}</span>` : ""}
+          </div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderIntegrations() {
+      const integ = state.integrations || { backend: {}, agent: {}, mcp: {}, vendors: [] };
+      const st = integ.backend || {};
+
+      els("integr-status").innerHTML = `
+        <div class="kpi"><span>Backend / API</span>
+          <div class="value"><span class="dot ok"></span><strong>${st.status || "unknown"}</strong></div></div>
+        <div class="kpi"><span>LLM agent</span>
+          <div class="value"><span class="dot ${integ.agent.configured ? "ok" : "warn"}"></span>
+            <strong>${integ.agent.configured ? "Configured" : "Not configured"}</strong></div>
+          <div class="hint" style="margin-top:6px;">${esc(integ.agent.detail || "")}</div></div>
+        <div class="kpi"><span>MCP tooling</span>
+          <div class="value"><span class="dot ${integ.mcp.available ? "ok" : "warn"}"></span>
+            <strong>${integ.mcp.available ? "Available" : "Unavailable"}</strong></div></div>
+      `;
+
+      const rows = state.vendors.map((v) => `
+        <tr>
+          <td><b>${v.label || v.vendor}</b></td>
+          <td>${interfaceStatusLabel(v)}</td>
+          <td>${v.configured ? "Yes" : "No"}</td>
+          <td>${v.reachable === true ? "Yes" : v.reachable === false ? "No" : "—"}</td>
+          <td>${esc(v.hostname || "—")}</td>
+          <td>${v.interface_count || 0}</td>
+          <td>${v.last_checked ? new Date(v.last_checked).toLocaleString() : "—"}</td>
+          <td>${v.error ? esc(v.error) : "<span class=\"hint\">—</span>"}</td>
+        </tr>`).join("");
+
+      els("integr-table").innerHTML = `
+        <table class="wide">
+          <thead><tr>
+            <th>Vendor</th><th>Status</th><th>Configured</th><th>Reachable</th>
+            <th>Hostname</th><th>Interfaces</th><th>Last checked</th><th>Details</th>
+          </tr></thead>
+          <tbody>${rows || `<tr><td colspan="8" class="hint">No vendor data available.</td></tr>`}</tbody>
+        </table>`;
+    }
+
+    function interfaceStatusLabel(v) {
+      if (!v.configured) return `<span class="badge muted">not configured</span>`;
+      if (v.reachable === true) return `<span class="badge ok">connected</span>`;
+      return `<span class="badge high">unreachable</span>`;
+    }
+
+    function esc(s) {
+      if (s === null || s === undefined) return "";
+      return String(s).replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      }[c]));
+    }
+
+    // ==========================================================
+    //  Vendor telemetry fetch + cache
+    // ==========================================================
+    async function loadVendorTelemetry(vendor, force = false) {
+      if (!force && state.telemetry[vendor]) return state.telemetry[vendor];
+      try {
+        const body = await getJson(`/vendors/${encodeURIComponent(vendor)}/telemetry`);
+        state.telemetry[vendor] = body;
+        return body;
+      } catch (err) {
+        // Missing/unavailable telemetry is a legitimate state, not a crash.
+        state.telemetry[vendor] = {
+          vendor,
+          error: err.message || "Telemetry retrieval failed.",
+          status: err.status,
+        };
+        return state.telemetry[vendor];
+      }
+    }
+
+    async function loadAllVendorTelemetry() {
+      const configured = state.vendors.filter((v) => v.configured).map((v) => v.vendor);
+      await Promise.all(configured.map((v) => loadVendorTelemetry(v)));
+    }
+
+    // ==========================================================
+    //  VIEW: Overview (active anomalies)
+    // ==========================================================
+    async function refreshOverview() {
+      const box = els("alerts-overview");
+      box.innerHTML = `<div class="state">Loading…</div>`;
+      await loadAllVendorTelemetry();
+      const now = new Date().toLocaleString();
+      els("overview-updated").textContent = `Updated ${now}`;
+
+      const findings = [];
+      for (const v of state.vendors) {
+        const body = state.telemetry[v.vendor];
+        if (!body || body.error) continue;
+        const anomalies = body.anomalies || [];
+        findings.push({
+          vendor: v,
+          device: body.device_id || v.hostname || v.vendor,
+          interface: body.interface || "n/a",
+          severity: body.severity || "normal",
+          anomalies,
+          time: body.timestamp || now,
+        });
+      }
+
+      if (!findings.length) {
+        box.innerHTML = `<div class="state"><div class="lead">No active anomalies</div>
+          <span class="hint">Reachable vendors returned no rule-engine anomalies, or the device is unreachable.</span></div>`;
+        return;
+      }
+
+      box.innerHTML = findings.map((f) => {
+        const sevClass = f.severity === "high" ? "high" : f.severity === "medium" ? "medium" : "normal";
+        const items = f.anomalies.length
+          ? `<ul>${f.anomalies.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>`
+          : `<p class="hint">No anomalies on this device.</p>`;
+        return `<div class="alert-row ${sevClass}">
+          <div class="alert-head">
+            <div><span class="device">${esc(f.vendor.label || f.vendor.vendor)} · ${esc(f.device)}</span>
+              <div class="iface">${esc(f.interface)}</div></div>
+            ${setStatusBadge(f.severity)}
+            <span class="time">${esc(f.time)}</span>
+          </div>${items}</div>`;
+      }).join("");
+    }
+
+    // ==========================================================
+    //  VIEW: Devices / inventory
+    // ==========================================================
+    async function loadInventory(vendor, force = false) {
+      if (!force && state.inventory[vendor]) return state.inventory[vendor];
+      try {
+        state.inventory[vendor] = await getJson(`/vendors/${encodeURIComponent(vendor)}/inventory`);
+        return state.inventory[vendor];
+      } catch (err) {
+        state.inventory[vendor] = { vendor, error: err.message || "Inventory retrieval failed.", status: err.status };
+        return state.inventory[vendor];
+      }
+    }
+
+    async function refreshDevices() {
+      const filter = els("device-filter").value;
+      const list = els("device-list");
+      list.innerHTML = `<div class="state">Loading…</div>`;
+
+      const vendors = state.vendors.filter((v) => filter === "all" || v.vendor === filter);
+      const results = await Promise.all(vendors.map((v) => loadInventory(v.vendor)));
+
+      const cards = [];
+      for (const inv of results) {
+        cards.push(renderDeviceCard(inv));
+      }
+
+      if (!cards.length) {
+        list.innerHTML = `<div class="state">No devices match this filter.</div>`;
+        return;
+      }
+      list.innerHTML = `<div class="grid cols-2">${cards.join("")}</div>`;
+      els("devices-updated").textContent = `Updated ${new Date().toLocaleString()}`;
+    }
+
+    function uptimeText(uptimeSeconds) {
+      if (uptimeSeconds === null || uptimeSeconds === undefined || uptimeSeconds === "") {
+        return "Not available";
+      }
+      const s = Number(uptimeSeconds);
+      if (!Number.isFinite(s) || s < 0) return "Not available";
+      const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+      const parts = [];
+      if (d) parts.push(`${d}d`);
+      if (h) parts.push(`${h}h`);
+      if (m) parts.push(`${m}m`);
+      return parts.length ? parts.join(" ") : "< 1m";
+    }
+
+    function renderDeviceCard(inv) {
+      if (inv.error) {
+        return `<section class="panel"><div class="content">
+          <div class="section-head"><h2>${esc(inv.label || inv.vendor)}</h2></div>
+          <div class="state"><div class="lead">${esc(inv.vendor)} not available</div>
+            <span class="hint">${esc(inv.error)}</span></div></section>`;
+      }
+
+      const ifaces = inv.interfaces || [];
+      const rows = ifaces.map((i) => `
+        <tr><td>${esc(i.name || "—")}</td><td>${interfaceStatusCell(i.status)}</td></tr>`).join("");
+
+      return `<section class="panel">
+        <div class="section-head">
+          <h2>${esc(inv.hostname || inv.device_id || inv.vendor)}</h2>
+          <span class="tag">${esc(inv.vendor || "")}</span>
+        </div>
+        <div class="content">
+          <div class="grid cols-3" style="margin-bottom:14px;">
+            <div class="kpi"><span>Model</span><div class="value"><strong>${esc(inv.model || "—" || "Not available")}</strong></div></div>
+            <div class="kpi"><span>Version</span><div class="value"><strong>${esc(inv.version || "—" || "Not available")}</strong></div></div>
+            <div class="kpi"><span>Uptime</span><div class="value"><strong>${esc(uptimeText(inv.uptime_seconds))}</strong></div></div>
+          </div>
+          <h3 style="margin:0 0 8px; font-size:13px;">Interfaces (${ifaces.length})</h3>
+          ${ifaces.length
+            ? `<table><thead><tr><th>Name</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`
+            : `<div class="state">No interfaces reported.</div>`}
+          <div class="hint" style="margin-top:10px;">Fetched ${esc(inv.fetched_at || "—")}</div>
+        </div></section>`;
+    }
+
+    // ==========================================================
+    //  VIEW: Telemetry (live gauges)
+    // ==========================================================
+    async function fetchLiveTelemetry(interfaceOpt) {
+      const vendor = els("tel-vendor").value;
+      if (!vendor) {
+        showToast("telemetry-notice", "Select a vendor first.", "error");
+        return;
+      }
+      const btn = els("tel-fetch-btn");
+      setBusy(btn, true, "Fetching…");
+      const body = await loadVendorTelemetry(vendor);
+      renderTelemetryBody(vendor, body);
+      setBusy(btn, false);
+    }
+
+    function renderTelemetryBody(vendor, body) {
+      const wrap = els("telemetry-body");
+      const tel = body && body.telemetry;
+
+      if (!tel || body.error) {
+        wrap.innerHTML = `<div class="state"><div class="lead">${esc(vendor)} telemetry unavailable</div>
+          <span class="hint">${esc(body.error || "The device is not configured or did not answer.")}</span></div>`;
+        return;
+      }
+
+      const sourceLabel = body.source ? `${esc(body.source)} (live device)` : "live device";
+      wrap.innerHTML = `
+        <div class="grid cols-3" id="tel-gauges"></div>
+        <div class="telemetry-meta">
+          <span><b>Source:</b> ${sourceLabel}</span>
+          <span><b>Interface:</b> ${esc(tel.interface || "n/a")}</span>
+          <span><b>Updated:</b> ${esc(tel.timestamp || "—")}</span>
+        </div>`;
+
+      const gauges = els("tel-gauges");
+      gauges.innerHTML =
+        metricGauge("CPU Utilization", tel.cpu_percent, "%", 88) +
+        metricGauge("Memory", tel.memory_percent, "%", 88) +
+        metricGauge("Packet Loss", tel.packet_loss_percent, "%", 98) +
+        plainGauge("Bandwidth", tel.bandwidth_mbps, "Mbps") +
+        plainGauge("Latency", tel.latency_ms, "ms") +
+        `<div class="gauge"><div class="gauge-label">Interface Status</div>
+          <div class="gauge-value">${interfaceStatusCell(tel.interface_status)}</div></div>`;
+    }
+
+    function metricGauge(label, value, unit, threshold) {
+      const v = Number(value);
+      if (value === null || value === undefined || value === "" || !Number.isFinite(v)) {
+        return `<div class="gauge"><div class="gauge-label">${esc(label)}</div>
+          <div class="gauge-track"><div class="gauge-fill" style="width:0%"></div></div>
+          <div class="gauge-value notavail">Not available</div></div>`;
+      }
+      const pct = Math.max(0, Math.min(100, (v / threshold) * 100));
+      const color = value > threshold * 0.85 ? "var(--high)" : value > threshold * 0.6 ? "var(--medium)" : "var(--ok)";
+      return `<div class="gauge"><div class="gauge-label">${esc(label)}</div>
+        <div class="gauge-track"><div class="gauge-fill" style="width:${pct.toFixed(0)}%;background:${color}"></div></div>
+        <div class="gauge-value">${v.toFixed(v % 1 ? 1 : 0)} ${unit}</div></div>`;
+    }
+
+    function plainGauge(label, value, unit) {
+      if (value === null || value === undefined || value === "" || !Number.isFinite(Number(value))) {
+        return `<div class="gauge"><div class="gauge-label">${esc(label)}</div>
+          <div class="gauge-value notavail">Not available</div></div>`;
+      }
+      return `<div class="gauge"><div class="gauge-label">${esc(label)}</div>
+        <div class="gauge-value">${esc(value)} <span class="unit">${esc(unit)}</span></div></div>`;
+    }
+
+    // ==========================================================
+    //  VIEW: Alerts & Diagnosis (live per-vendor)
+    // ==========================================================
+    async function refreshAlerts() {
+      const box = els("alerts-list");
+      box.innerHTML = `<div class="state">Loading…</div>`;
+      await loadAllVendorTelemetry();
+
+      const rows = [];
+      for (const v of state.vendors) {
+        const body = state.telemetry[v.vendor];
+        if (!body || body.error) continue;
+        rows.push(renderAlertRow(body));
+      }
+
+      if (!rows.length) {
+        box.innerHTML = `<div class="state"><div class="lead">No diagnosis data</div>
+          <span class="hint">Reachable vendors produce alerts here.</span></div>`;
+        return;
+      }
+      box.innerHTML = rows.join("");
+    }
+
+    function renderAlertRow(body) {
+      const sev = body.severity || "normal";
+      const anomalies = body.anomalies || [];
+      const evidence = body.evidence || [];
+      const time = body.timestamp || new Date().toLocaleString();
+
+      const evidenceList = evidence.length
+        ? `<ol>${evidence.map((e) => `<li>${esc(e)}</li>`).join("")}</ol>`
+        : `<p class="hint">No anomalies detected on this device.</p>`;
+
+      return `<div class="alert-row ${sev}">
+        <div class="alert-head">
+          <div>
+            <span class="device">${esc(body.device_id || body.vendor)}</span>
+            <div class="iface">${esc(body.source || "")} · interface ${esc(body.interface || "n/a")}</div>
+          </div>
+          ${setStatusBadge(sev)}
+          <span class="time">${esc(time)}</span>
+        </div>
+        <div class="alerts-list">
+          <h3>Anomalies</h3>${anomalies.length ? `<ul>${anomalies.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>` : `<li class="hint">None</li>`}
+          <h3>Evidence &amp; threshold</h3><div class="evidence-block">${evidenceList}</div>
+          ${body.recommendation ? `<div class="evidence-block"><h4>Recommended action</h4><p style="margin:0;">${esc(body.recommendation)}</p></div>` : ""}
+        </div>
+      </div>`;
+    }
+
+    // ==========================================================
+    //  VIEW: AI troubleshooting (manual / synthetic)
+    // ==========================================================
+    function aiPayload() {
+      const form = els("ai-form");
       const data = new FormData(form);
       return {
         device_id: data.get("device_id"),
         interface: data.get("interface"),
-        timestamp: data.get("timestamp"),
+        timestamp: new Date().toISOString(),
         cpu_percent: Number(data.get("cpu_percent")),
         memory_percent: Number(data.get("memory_percent")),
         bandwidth_mbps: Number(data.get("bandwidth_mbps")),
         packet_loss_percent: Number(data.get("packet_loss_percent")),
         latency_ms: Number(data.get("latency_ms")),
-        interface_status: data.get("interface_status")
+        interface_status: data.get("interface_status"),
       };
     }
 
-    function showNotice(message) {
-      notice.textContent = message;
-      notice.classList.add("show");
-    }
+    function renderAiDiagnosis(result) {
+      els("ai-diag-time").textContent = `Diagnosed ${new Date().toLocaleString()}`;
+      const sev = els("ai-severity");
+      sev.textContent = result.severity || "unknown";
+      sev.className = `badge ${result.severity || "normal"}`;
+      els("ai-anomaly-count").textContent = (result.anomalies || []).length;
 
-    function clearNotice() {
-      notice.textContent = "";
-      notice.classList.remove("show");
-    }
-
-    function setBusy(button, busy) {
-      button.disabled = busy;
-      button.textContent = busy ? "Working..." : button.dataset.label;
-    }
-
-    function renderList(id, items, emptyText) {
-      const element = document.getElementById(id);
-      element.innerHTML = "";
-      if (!items || items.length === 0) {
-        const li = document.createElement("li");
-        li.className = "empty";
-        li.textContent = emptyText;
-        element.appendChild(li);
-        return;
+      const evidence = els("ai-evidence");
+      evidence.innerHTML = "";
+      if (result.evidence && result.evidence.length) {
+        result.evidence.forEach((e) => {
+          const li = document.createElement("li");
+          li.textContent = e;
+          evidence.appendChild(li);
+        });
+      } else {
+        evidence.innerHTML = `<li class="hint">No anomaly evidence found.</li>`;
       }
-      items.forEach((item) => {
-        const li = document.createElement("li");
-        li.textContent = item;
-        element.appendChild(li);
+
+      const rec = els("ai-recommendation");
+      rec.textContent = result.recommendation || "No recommendation.";
+      rec.className = "";
+    }
+
+    // ==========================================================
+    //  View switching
+    // ==========================================================
+    function switchTab(id) {
+      $$(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.tab === id));
+      $$(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + id));
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    // ==========================================================
+    //  Populated <select>s
+    // ==========================================================
+    function populateVendorSelects() {
+      const values = state.vendors.map((v) => v.vendor);
+      for (const id of ["device-filter", "tel-vendor"]) {
+        const sel = els(id);
+        if (!sel) continue;
+        const firstId = id === "device-filter" ? "all" : values[0] || "";
+        sel.innerHTML = id === "device-filter"
+          ? `<option value="all">All vendors</option>`
+          : `<option value="">—</option>`;
+        values.forEach((v) => {
+          const opt = document.createElement("option");
+          opt.value = v;
+          const label = state.vendors.find((x) => x.vendor === v);
+          opt.textContent = label ? `${label.label || v}` : v;
+          sel.appendChild(opt);
+        });
+      }
+    }
+
+    async function populateInterfaceOptions(vendor) {
+      const sel = els("tel-interface");
+      sel.innerHTML = `<option value="">(device default)</option>`;
+      try {
+        const inv = await loadInventory(vendor);
+        const ifaces = (inv && inv.interfaces) || [];
+        ifaces.forEach((i) => {
+          const opt = document.createElement("option");
+          opt.value = i.name;
+          opt.textContent = `${i.name} (${i.status})`;
+          sel.appendChild(opt);
+        });
+      } catch (_) { /* optional nicety */ }
+    }
+
+    // ==========================================================
+    //  Boot + wiring
+    // ==========================================================
+    async function refreshAll(force) {
+      const started = Date.now();
+      clearNotice("telemetry-notice");
+      clearNotice("ai-notice");
+      await refreshHealth();
+      await loadIntegrations();
+      populateVendorSelects();
+      // Always populate the overview's active-anomalies view on load; the
+      // "Refresh" action additionally force-re-reads any cached telemetry.
+      await refreshOverview();
+      if (force === true) {
+        await loadVendorTelemetry(state.vendors[0] && state.vendors[0].vendor, true);
+      }
+      state.lastUpdated = new Date().toLocaleTimeString();
+      els("overview-updated").textContent = `Updated ${state.lastUpdated}`;
+    }
+
+    function init() {
+      // Navigation
+      $$(".nav-item").forEach((btn) => {
+        btn.addEventListener("click", () => switchTab(btn.dataset.tab));
       });
-    }
 
-    function renderDiagnosis(result) {
-      document.getElementById("device").textContent = result.device_id;
-      document.getElementById("interface").textContent = result.interface;
-      document.getElementById("anomaly-count").textContent = result.anomalies.length;
-      document.getElementById("result-time").textContent = new Date().toLocaleString();
+      els("refresh-btn").addEventListener("click", () => refreshAll(true));
 
-      const severity = document.getElementById("severity");
-      severity.textContent = result.severity;
-      severity.className = `badge ${result.severity}`;
-
-      renderList("evidence", result.evidence, "No anomaly evidence found.");
-      document.getElementById("recommendation").textContent = result.recommendation;
-      document.getElementById("recommendation").className = "";
-    }
-
-    async function postJson(url, payload) {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(payload)
+      // Devices
+      els("device-filter").addEventListener("change", refreshDevices);
+      els("device-refresh").addEventListener("click", () => {
+        Promise.all(Object.keys(state.inventory).map((v) => loadInventory(v, true)))
+          .then(refreshDevices);
       });
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `Request failed with ${response.status}`);
-      }
+      // Telemetry
+      els("tel-vendor").addEventListener("change", (e) => populateInterfaceOptions(e.target.value));
+      els("telemetry-fetch-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        fetchLiveTelemetry(els("tel-interface").value);
+      });
+      els("tel-refresh").addEventListener("click", () => {
+        const v = els("tel-vendor").value;
+        if (v) { loadInventory(v, true).then(() => fetchLiveTelemetry(els("tel-interface").value)); }
+      });
 
-      return response.json();
+      // Alerts
+      els("alerts-fetch-btn").addEventListener("click", refreshAlerts);
+
+      // AI
+      const aiForm = els("ai-form");
+      aiForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const btn = els("ai-run-btn");
+        setBusy(btn, true, "Diagnosing…");
+        try {
+          const result = await postJson("/diagnose", aiPayload());
+          renderAiDiagnosis(result);
+          showToast("ai-notice", "Rule-engine diagnosis complete.", "success");
+        } catch (err) {
+          showToast("ai-notice", "Diagnosis failed: " + err.message, "error");
+        } finally {
+          setBusy(btn, false);
+        }
+      });
+      els("ai-agent-btn").addEventListener("click", async () => {
+        const btn = els("ai-agent-btn");
+        setBusy(btn, true, "Asking agent…");
+        try {
+          const result = await postJson("/analyze", aiPayload());
+          const out = els("ai-analysis");
+          out.textContent = result && result.analysis ? result.analysis : "(empty agent response)";
+          showToast("ai-notice", "Agent response captured from the LLM backend.", "success");
+        } catch (err) {
+          const out = els("ai-analysis");
+          out.textContent = "LLM backend is unavailable. Use the rule-engine diagnosis instead.";
+          showToast("ai-notice", "Agent analysis unavailable: " + err.message, "error");
+        } finally {
+          setBusy(btn, false);
+        }
+      });
+
+      // Initial load
+      refreshAll(false);
     }
 
-    async function refreshHealth() {
-      const health = document.getElementById("health");
-      try {
-        const response = await fetch("/health");
-        const data = await response.json();
-        health.innerHTML = `<span class="dot ok"></span><span>${data.service}: ${data.status}</span>`;
-      } catch {
-        health.innerHTML = `<span class="dot"></span><span>Service unavailable</span>`;
-      }
-    }
-
-    diagnoseBtn.dataset.label = diagnoseBtn.textContent;
-    analyzeBtn.dataset.label = analyzeBtn.textContent;
-
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      clearNotice();
-      setBusy(diagnoseBtn, true);
-      try {
-        const result = await postJson("/diagnose", telemetryPayload());
-        renderDiagnosis(result);
-      } catch (error) {
-        showNotice(`Diagnosis failed: ${error.message}`);
-      } finally {
-        setBusy(diagnoseBtn, false);
-      }
-    });
-
-    analyzeBtn.addEventListener("click", async () => {
-      clearNotice();
-      setBusy(analyzeBtn, true);
-      try {
-        const result = await postJson("/analyze", telemetryPayload());
-        document.getElementById("analysis").textContent = result.analysis;
-      } catch (error) {
-        showNotice("Agent analysis is unavailable. The rule-based diagnosis can still be used.");
-      } finally {
-        setBusy(analyzeBtn, false);
-      }
-    });
-
-    refreshHealth();
-    form.dispatchEvent(new Event("submit"));
+    document.addEventListener("DOMContentLoaded", init);
   </script>
 </body>
 </html>

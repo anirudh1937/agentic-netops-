@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Optional
 
 from app.inventory import DeviceInventory, Vendor
 from app.telemetry import NetworkTelemetry
@@ -35,6 +36,20 @@ class SandboxConnector(ABC):
         """Human-readable vendor label."""
 
         return self.vendor.value.replace("-", " ").title()
+
+    @property
+    def host(self) -> Optional[str]:
+        """Management address of the configured device, when available.
+
+        This is a public management address only -- never a credential. It is
+        surfaced so dashboards can label a device, but callers must treat it
+        as non-secret.
+        """
+
+        device = getattr(self, "_device", None)
+        if device is not None:
+            return getattr(device, "host", None)
+        return None
 
     @abstractmethod
     def connectivity_check(self) -> bool:

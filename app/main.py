@@ -1,10 +1,22 @@
+from __future__ import annotations
+
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
 from app.api.agent import AgentAnalysisError, analyze_telemetry
-from app.api.schemas import AnalyzeResponse, HealthResponse
+from app.api.schemas import (
+    AnalyzeResponse,
+    HealthResponse,
+    IntegrationAgent,
+    IntegrationBackend,
+    IntegrationMcp,
+    IntegrationVendor,
+    IntegrationsResponse,
+)
 from app.api.telemetry import ingest_telemetry
 from app.cisco import CiscoTelemetryError, fetch_telemetry
 from app.connectors import (
@@ -84,6 +96,103 @@ def list_vendors() -> dict[str, list[str]]:
     """Return the list of vendor connectors currently registered."""
 
     return {"vendors": available_vendors()}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _llm_configured() -> tuple[bool, str]:
+    """Best-effort check that the agent's model credentials exist.
+
+    ``reachable`` still depends on ``/analyze`` succeeding; presence of keys
+    only means the model *might* run.
+    """
+
+    for key in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        if os.environ.get(key):
+            return True, (
+                "Model credentials configured; "
+                "run the agent to confirm reachability."
+            )
+    return False, "No model credentials configured. Set GEMINI_API_KEY."
+
+
+def _mcp_available() -> bool:
+    try:
+        import app.mcp.server  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+@app.get("/integrations", response_model=IntegrationsResponse)
+def integrations_status() -> IntegrationsResponse:
+    """Aggregate connectivity + inventory status for every vendor.
+
+    Read-only: only performs reachability probes and inventory reads against
+    configured devices. Missing configuration is reported honestly rather than
+    as a healthy device, and credential-safe error messages are surfaced.
+    """
+
+    # Read agent status from the process environment *before* the vendor loop,
+    # because make_connector() runs load_dotenv() internally and would
+    # repopulate keys such as GEMINI_API_KEY from .env.
+    configured, detail = _llm_configured()
+
+    vendors: list[IntegrationVendor] = []
+    for vendor in available_vendors():
+        checked = _now_iso()
+        entry = IntegrationVendor(
+            vendor=vendor,
+            label=Vendor(vendor).value.title(),
+            last_checked=checked,
+        )
+        try:
+            connector = make_connector(Vendor(vendor))
+        except RuntimeError as exc:
+            # Both SandboxConnectorError and CiscoTelemetryError derive from
+            # RuntimeError and carry a credential-safe "not configured" message.
+            entry.error = str(exc)
+            vendors.append(entry)
+            continue
+        except Exception as exc:  # noqa: BLE001 - surface, do not crash endpoint
+            entry.error = "Unable to initialize device connector."
+            vendors.append(entry)
+            continue
+
+        entry.configured = True
+        entry.host = getattr(connector, "host", None)
+
+        try:
+            reachable = connector.connectivity_check()
+        except RuntimeError as exc:
+            entry.error = str(exc)
+            reachable = False
+        except Exception as exc:  # noqa: BLE001
+            entry.error = f"Device connectivity check failed: {type(exc).__name__}"
+            reachable = False
+        entry.reachable = reachable
+
+        if reachable:
+            try:
+                inventory = connector.fetch_inventory()
+            except Exception as exc:  # noqa: BLE001
+                entry.error = "Device inventory could not be read."
+            else:
+                entry.hostname = inventory.hostname
+                entry.interfaces = [intf.name for intf in inventory.interfaces]
+                entry.interface_count = len(entry.interfaces)
+
+        vendors.append(entry)
+
+    return IntegrationsResponse(
+        backend=IntegrationBackend(),
+        agent=IntegrationAgent(configured=configured, detail=detail),
+        mcp=IntegrationMcp(available=_mcp_available(), detail="Module importable."),
+        vendors=vendors,
+        generated_at=_now_iso(),
+    )
 
 
 def _resolve_connector(vendor: str):

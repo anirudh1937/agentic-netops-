@@ -1,10 +1,10 @@
-from mcp.server import MCPServer
+from mcp.server.fastmcp import FastMCP
 
 from app.mcp.network_tools import get_device_health
 from app.telemetry import NetworkTelemetry
 
 
-mcp = MCPServer("Agentic NetOps")
+mcp = FastMCP("Agentic NetOps")
 
 
 @mcp.tool()

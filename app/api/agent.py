@@ -1,5 +1,3 @@
-import asyncio
-
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
@@ -10,6 +8,10 @@ from app.telemetry import NetworkTelemetry
 
 APP_NAME = "agentic_netops"
 USER_ID = "api-user"
+
+
+class AgentAnalysisError(RuntimeError):
+    """Raised when the agent cannot produce a usable analysis."""
 
 
 async def analyze_telemetry(telemetry: NetworkTelemetry) -> str:
@@ -62,4 +64,9 @@ async def analyze_telemetry(telemetry: NetworkTelemetry) -> str:
                 if part.text:
                     final_text += part.text
 
-    return final_text.strip()
+    final_text = final_text.strip()
+
+    if not final_text:
+        raise AgentAnalysisError("Agent returned an empty analysis.")
+
+    return final_text

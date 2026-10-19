@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agentic NetOps Dashboard</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --line: #d9dee7;
+      --text: #16202a;
+      --muted: #5d6978;
+      --accent: #0f6f6b;
+      --accent-dark: #0a514e;
+      --ok: #16794c;
+      --medium: #9a5b00;
+      --high: #b42318;
+      --surface: #eef2f6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      line-height: 1.45;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      max-width: 1320px;
+      min-height: 72px;
+      margin: 0 auto;
+      padding: 14px 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .mark {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border: 1px solid #9bc7c4;
+      border-radius: 8px;
+      background: #e6f3f2;
+      color: var(--accent-dark);
+      font-weight: 800;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .subtitle {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .health {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #98a2b3;
+    }
+
+    .dot.ok {
+      background: var(--ok);
+    }
+
+    main {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 22px 24px 32px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(330px, 430px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 54px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    form {
+      display: grid;
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    input,
+    select {
+      width: 100%;
+      min-height: 40px;
+      padding: 9px 10px;
+      border: 1px solid #c7ced8;
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+    }
+
+    input:focus,
+    select:focus {
+      outline: 3px solid #c8e5e3;
+      border-color: var(--accent);
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    button {
+      min-height: 42px;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      background: var(--accent);
+      color: white;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+    }
+
+    button.secondary {
+      background: #ffffff;
+      color: var(--accent-dark);
+    }
+
+    button:disabled {
+      border-color: #aab3bf;
+      background: #aab3bf;
+      cursor: wait;
+    }
+
+    .results {
+      display: grid;
+      gap: 18px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      padding: 16px;
+    }
+
+    .metric {
+      min-height: 86px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 20px;
+      overflow-wrap: anywhere;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      font-weight: 800;
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0;
+    }
+
+    .badge.normal {
+      background: #e8f5ee;
+      color: var(--ok);
+    }
+
+    .badge.medium {
+      background: #fff2d9;
+      color: var(--medium);
+    }
+
+    .badge.high {
+      background: #fde8e7;
+      color: var(--high);
+    }
+
+    .content {
+      padding: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .block {
+      min-height: 160px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+
+    h3 {
+      margin: 0 0 10px;
+      font-size: 14px;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    li {
+      margin: 8px 0;
+    }
+
+    .analysis {
+      min-height: 140px;
+      white-space: pre-wrap;
+      color: #25313f;
+    }
+
+    .empty {
+      color: var(--muted);
+    }
+
+    .notice {
+      display: none;
+      margin: 0 16px 16px;
+      padding: 12px;
+      border-radius: 8px;
+      background: #fff2d9;
+      color: #704100;
+      border: 1px solid #ffd58a;
+    }
+
+    .notice.show {
+      display: block;
+    }
+
+    @media (max-width: 980px) {
+      .layout,
+      .split,
+      .summary {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+
+    @media (max-width: 620px) {
+      main,
+      .topbar {
+        padding-left: 14px;
+        padding-right: 14px;
+      }
+
+      .grid,
+      .actions {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <div class="brand">
+        <div class="mark">AN</div>
+        <div>
+          <h1>Agentic NetOps</h1>
+          <p class="subtitle">Telemetry diagnosis and AI-assisted network operations</p>
+        </div>
+      </div>
+      <div class="health" id="health"><span class="dot"></span><span>Checking service</span></div>
+    </div>
+  </header>
+
+  <main>
+    <div class="layout">
+      <section>
+        <div class="section-head">
+          <h2>Telemetry Input</h2>
+          <span class="hint">Rule engine first, agent second</span>
+        </div>
+        <form id="telemetry-form">
+          <div class="grid">
+            <label>Device ID
+              <input name="device_id" value="router-01" required>
+            </label>
+            <label>Interface
+              <input name="interface" value="GigabitEthernet0/1" required>
+            </label>
+          </div>
+          <label>Timestamp
+            <input name="timestamp" value="2026-08-25T00:00:00Z" required>
+          </label>
+          <div class="grid">
+            <label>CPU %
+              <input name="cpu_percent" type="number" min="0" max="100" step="0.1" value="92" required>
+            </label>
+            <label>Memory %
+              <input name="memory_percent" type="number" min="0" max="100" step="0.1" value="60" required>
+            </label>
+            <label>Bandwidth Mbps
+              <input name="bandwidth_mbps" type="number" min="0" step="0.1" value="100" required>
+            </label>
+            <label>Packet Loss %
+              <input name="packet_loss_percent" type="number" min="0" max="100" step="0.1" value="5" required>
+            </label>
+            <label>Latency ms
+              <input name="latency_ms" type="number" min="0" step="0.1" value="150" required>
+            </label>
+            <label>Interface Status
+              <select name="interface_status">
+                <option value="up">up</option>
+                <option value="down">down</option>
+              </select>
+            </label>
+          </div>
+          <div class="actions">
+            <button type="submit" id="diagnose-btn">Run Diagnosis</button>
+            <button type="button" class="secondary" id="analyze-btn">Ask Agent</button>
+          </div>
+        </form>
+        <div class="notice" id="notice"></div>
+      </section>
+
+      <div class="results">
+        <section>
+          <div class="section-head">
+            <h2>Diagnosis Summary</h2>
+            <span class="hint" id="result-time">Waiting for telemetry</span>
+          </div>
+          <div class="summary">
+            <div class="metric">
+              <span>Device</span>
+              <strong id="device">-</strong>
+            </div>
+            <div class="metric">
+              <span>Interface</span>
+              <strong id="interface">-</strong>
+            </div>
+            <div class="metric">
+              <span>Severity</span>
+              <strong><span class="badge normal" id="severity">normal</span></strong>
+            </div>
+            <div class="metric">
+              <span>Anomalies</span>
+              <strong id="anomaly-count">0</strong>
+            </div>
+          </div>
+          <div class="content split">
+            <div class="block">
+              <h3>Evidence</h3>
+              <ul id="evidence"><li class="empty">Run diagnosis to populate evidence.</li></ul>
+            </div>
+            <div class="block">
+              <h3>Recommended Action</h3>
+              <p id="recommendation" class="empty">Run diagnosis to see recommendations.</p>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-head">
+            <h2>Agent Explanation</h2>
+            <span class="hint">Plain-English operator view</span>
+          </div>
+          <div class="content">
+            <div class="block analysis" id="analysis">Ask the agent after running or reviewing diagnosis.</div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const form = document.getElementById("telemetry-form");
+    const diagnoseBtn = document.getElementById("diagnose-btn");
+    const analyzeBtn = document.getElementById("analyze-btn");
+    const notice = document.getElementById("notice");
+
+    function telemetryPayload() {
+      const data = new FormData(form);
+      return {
+        device_id: data.get("device_id"),
+        interface: data.get("interface"),
+        timestamp: data.get("timestamp"),
+        cpu_percent: Number(data.get("cpu_percent")),
+        memory_percent: Number(data.get("memory_percent")),
+        bandwidth_mbps: Number(data.get("bandwidth_mbps")),
+        packet_loss_percent: Number(data.get("packet_loss_percent")),
+        latency_ms: Number(data.get("latency_ms")),
+        interface_status: data.get("interface_status")
+      };
+    }
+
+    function showNotice(message) {
+      notice.textContent = message;
+      notice.classList.add("show");
+    }
+
+    function clearNotice() {
+      notice.textContent = "";
+      notice.classList.remove("show");
+    }
+
+    function setBusy(button, busy) {
+      button.disabled = busy;
+      button.textContent = busy ? "Working..." : button.dataset.label;
+    }
+
+    function renderList(id, items, emptyText) {
+      const element = document.getElementById(id);
+      element.innerHTML = "";
+      if (!items || items.length === 0) {
+        const li = document.createElement("li");
+        li.className = "empty";
+        li.textContent = emptyText;
+        element.appendChild(li);
+        return;
+      }
+      items.forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        element.appendChild(li);
+      });
+    }
+
+    function renderDiagnosis(result) {
+      document.getElementById("device").textContent = result.device_id;
+      document.getElementById("interface").textContent = result.interface;
+      document.getElementById("anomaly-count").textContent = result.anomalies.length;
+      document.getElementById("result-time").textContent = new Date().toLocaleString();
+
+      const severity = document.getElementById("severity");
+      severity.textContent = result.severity;
+      severity.className = `badge ${result.severity}`;
+
+      renderList("evidence", result.evidence, "No anomaly evidence found.");
+      document.getElementById("recommendation").textContent = result.recommendation;
+      document.getElementById("recommendation").className = "";
+    }
+
+    async function postJson(url, payload) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Request failed with ${response.status}`);
+      }
+
+      return response.json();
+    }
+
+    async function refreshHealth() {
+      const health = document.getElementById("health");
+      try {
+        const response = await fetch("/health");
+        const data = await response.json();
+        health.innerHTML = `<span class="dot ok"></span><span>${data.service}: ${data.status}</span>`;
+      } catch {
+        health.innerHTML = `<span class="dot"></span><span>Service unavailable</span>`;
+      }
+    }
+
+    diagnoseBtn.dataset.label = diagnoseBtn.textContent;
+    analyzeBtn.dataset.label = analyzeBtn.textContent;
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      clearNotice();
+      setBusy(diagnoseBtn, true);
+      try {
+        const result = await postJson("/diagnose", telemetryPayload());
+        renderDiagnosis(result);
+      } catch (error) {
+        showNotice(`Diagnosis failed: ${error.message}`);
+      } finally {
+        setBusy(diagnoseBtn, false);
+      }
+    });
+
+    analyzeBtn.addEventListener("click", async () => {
+      clearNotice();
+      setBusy(analyzeBtn, true);
+      try {
+        const result = await postJson("/analyze", telemetryPayload());
+        document.getElementById("analysis").textContent = result.analysis;
+      } catch (error) {
+        showNotice("Agent analysis is unavailable. The rule-based diagnosis can still be used.");
+      } finally {
+        setBusy(analyzeBtn, false);
+      }
+    });
+
+    refreshHealth();
+    form.dispatchEvent(new Event("submit"));
+  </script>
+</body>
+</html>

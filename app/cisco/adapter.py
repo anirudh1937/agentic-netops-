@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 import httpx
 from dotenv import load_dotenv
 
+from app.connectors.base import SandboxConnector
+from app.inventory import DeviceInventory, InterfaceInfo, Vendor
 from app.telemetry import NetworkTelemetry
 
 
@@ -241,6 +243,44 @@ def _get_interface(client: CiscoClient, interface: str | None):
     return (name or None), status
 
 
+def _get_all_interfaces(client: CiscoClient) -> list[tuple[str | None, str | None]]:
+    """Return ``(name, status)`` for every interface the device lists.
+
+    Status may be ``None`` when a device does not report ``oper-status`` so the
+    caller can default it to ``"up"`` instead of falsely flagging an outage.
+    """
+
+    data = client.get_json("data/Cisco-IOS-XE-interfaces-oper:interfaces")
+
+    candidates = []
+    if isinstance(data, dict):
+        interfaces = data.get("Cisco-IOS-XE-interfaces-oper:interfaces")
+        if isinstance(interfaces, dict):
+            candidates = interfaces.get("interface", [])
+    if not isinstance(candidates, list):
+        candidates = []
+
+    interfaces: list[tuple[str | None, str | None]] = []
+    for intf in candidates:
+        if not isinstance(intf, dict):
+            continue
+        name = intf.get("name")
+        status = _interface_status(intf.get("oper-status"))
+        interfaces.append((name, status))
+
+    return interfaces
+
+
+def _interface_status(status_raw):
+    """Translate a YANG ``oper-status`` leaf into ``up``/``down``/``None``."""
+
+    if status_raw is None:
+        return None
+    if str(status_raw).lower() == "up":
+        return "up"
+    return "down"
+
+
 def _get_hostname(client: CiscoClient):
     data = client.get_json("data/Cisco-IOS-XE-native:native/hostname")
     if not isinstance(data, dict):
@@ -291,3 +331,50 @@ def fetch_telemetry(
     )
 
     return telemetry
+
+
+class CiscoConnector(SandboxConnector):
+    """Read-only connector for Cisco IOS XE devices over RESTCONF.
+
+    Implements :class:`~app.connectors.base.SandboxConnector` by delegating to
+    the module's RESTCONF helpers so the connector and the standalone
+    ``fetch_telemetry`` function share the same parsing logic.
+    """
+
+    vendor = Vendor.CISCO
+
+    def __init__(
+        self,
+        device: CiscoDevice | None = None,
+        client: CiscoClient | None = None,
+    ) -> None:
+        self._device = device or CiscoDevice.from_env()
+        self._client = client or CiscoClient(self._device)
+
+    @classmethod
+    def from_env(cls, environ: dict[str, str] | None = None) -> "CiscoConnector":
+        return cls(device=CiscoDevice.from_env(environ))
+
+    def connectivity_check(self) -> bool:
+        return _get_hostname(self._client) is not None
+
+    def fetch_inventory(self, interface: str | None = None) -> DeviceInventory:
+        hostname = _get_hostname(self._client)
+        name, status = _get_interface(self._client, interface)
+        if name is None:
+            name = interface or self._device.host
+        status = status or "up"
+
+        return DeviceInventory(
+            device_id=hostname or self._device.host,
+            vendor=Vendor.CISCO,
+            hostname=hostname,
+            interfaces=[InterfaceInfo(name=name, status=status)],
+        )
+
+    def fetch_telemetry(self, interface: str | None = None) -> NetworkTelemetry:
+        return fetch_telemetry(
+            device=self._device,
+            client=self._client,
+            interface=interface,
+        )

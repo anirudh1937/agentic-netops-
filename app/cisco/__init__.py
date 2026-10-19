@@ -7,6 +7,7 @@ model without inventing measurements.
 
 from .adapter import (
     CiscoClient,
+    CiscoConnector,
     CiscoDevice,
     CiscoTelemetry,
     CiscoTelemetryError,
@@ -15,6 +16,7 @@ from .adapter import (
 
 __all__ = [
     "CiscoClient",
+    "CiscoConnector",
     "CiscoDevice",
     "CiscoTelemetry",
     "CiscoTelemetryError",

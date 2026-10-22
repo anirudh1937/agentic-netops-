@@ -9,11 +9,21 @@ from app.anomaly import detect_anomalies
 class DiagnosisResult(BaseModel):
     device_id: str
     interface: str
-    severity: Literal["normal", "medium", "high"]
+    severity: Literal["normal", "medium", "high", "unknown"]
     diagnosis: str
     anomalies: list[str]
     evidence: list[str]
     recommendation: str
+
+
+#: Health probes whose presence lets us judge resource health. ``bandwidth_mbps``
+#: is excluded because it is not an anomaly signal on its own.
+_HEALTH_PROBES = (
+    "cpu_percent",
+    "memory_percent",
+    "packet_loss_percent",
+    "latency_ms",
+)
 
 
 # Thresholds mirror detect_anomalies() in app.anomaly. They are collected here so
@@ -28,10 +38,43 @@ LATENCY_THRESHOLD = 100.0
 CRITICAL_ANOMALIES = {"interface_down"}
 
 
+def _has_sufficient_probes(telemetry: NetworkTelemetry) -> bool:
+    """Whether at least one resource-health probe was actually reported.
+
+    ``bandwidth_mbps`` is intentionally excluded: it is not an anomaly signal
+    and cannot prove the device is healthy on its own. An interface that is
+    simply ``up`` is likewise not proof of health, so it is not counted here.
+    Without at least one real measurement we cannot judge resource health.
+    """
+
+    return any(
+        getattr(telemetry, name) is not None
+        for name in _HEALTH_PROBES
+    )
+
+
 def diagnose_network_issue(telemetry: NetworkTelemetry) -> dict:
     anomalies = detect_anomalies(telemetry)
 
     if not anomalies:
+        if not _has_sufficient_probes(telemetry):
+            return DiagnosisResult(
+                device_id=telemetry.device_id,
+                interface=telemetry.interface,
+                severity="unknown",
+                diagnosis="Insufficient telemetry to assess device health.",
+                anomalies=[],
+                evidence=[
+                    "No CPU, memory, packet-loss, or latency measurements "
+                    "were provided, so device health cannot be confirmed.",
+                ],
+                recommendation=(
+                    "Confirm telemetry collection is configured on this "
+                    "device; interface status was reported but no health "
+                    "metrics arrived."
+                ),
+            ).model_dump()
+
         return DiagnosisResult(
             device_id=telemetry.device_id,
             interface=telemetry.interface,

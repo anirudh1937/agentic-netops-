@@ -134,6 +134,26 @@ def test_two_anomalies_produce_high_severity():
     assert len(result["anomalies"]) == 2
 
 
+def test_recovery_from_abnormal_to_healthy():
+    # A faulted device must return to 'normal' once the anomaly clears, so the
+    # pipeline does not keep firing alerts after recovery.
+    degraded = make_telemetry(
+        cpu_percent=95,
+        interface_status="down",
+    )
+    assert diagnose_network_issue(degraded)["severity"] == "high"
+
+    recovered = make_telemetry(
+        cpu_percent=30,
+        interface_status="up",
+    )
+    result = diagnose_network_issue(recovered)
+
+    assert result["severity"] == "normal"
+    assert result["anomalies"] == []
+    assert result["diagnosis"] == "No significant network anomaly detected."
+
+
 def test_no_recommendations_invent_root_cause():
     # Evidence reports observations + thresholds; recommendations are possible
     # actions, not asserted outcomes. Nothing states a guaranteed cause/result.
@@ -155,3 +175,91 @@ def test_no_recommendations_invent_root_cause():
 
 def test_critical_anomaly_set_matches_intended_signal():
     assert CRITICAL_ANOMALIES == {"interface_down"}
+
+
+def test_missing_all_probes_is_unknown_not_healthy():
+    # A device that reports only interface status (no metrics) must NOT be
+    # reported as healthy simply because the interface is up. Missing values
+    # must never be silently treated as zero (which would look "normal").
+    telemetry = make_telemetry(
+        cpu_percent=None,
+        memory_percent=None,
+        bandwidth_mbps=None,
+        packet_loss_percent=None,
+        latency_ms=None,
+        interface_status="up",
+    )
+
+    result = diagnose_network_issue(telemetry)
+
+    assert result["severity"] == "unknown"
+    assert result["anomalies"] == []
+    assert result["diagnosis"]
+    # No threshold-based evidence is fabricated for data that never arrived.
+    assert result["evidence"]
+    for line in result["evidence"]:
+        assert "above the" not in line
+        assert "%" not in line
+    assert result["recommendation"] != "Continue monitoring."
+
+
+def test_interface_up_without_metrics_is_not_healthy():
+    # Regression: an "up" interface alone must not count as proof of health.
+    telemetry = make_telemetry(
+        cpu_percent=None,
+        memory_percent=None,
+        packet_loss_percent=None,
+        latency_ms=None,
+    )
+
+    assert telemetry.interface_status == "up"
+    assert diagnose_network_issue(telemetry)["severity"] == "unknown"
+
+
+def test_bandwidth_alone_is_insufficient():
+    # bandwidth_mbps is not a health probe, so it cannot establish health on
+    # its own.
+    telemetry = make_telemetry(
+        cpu_percent=None,
+        memory_percent=None,
+        packet_loss_percent=None,
+        latency_ms=None,
+        bandwidth_mbps=900,
+    )
+
+    result = diagnose_network_issue(telemetry)
+
+    assert result["severity"] == "unknown"
+
+
+def test_single_valid_probe_is_healthy_when_no_anomaly():
+    # At least one real measurement is enough to judge resource health.
+    telemetry = make_telemetry(
+        cpu_percent=42,
+        memory_percent=None,
+        packet_loss_percent=None,
+        latency_ms=None,
+    )
+
+    result = diagnose_network_issue(telemetry)
+
+    assert result["severity"] == "normal"
+    assert result["diagnosis"] == "No significant network anomaly detected."
+
+
+def test_insufficient_but_anomalous_still_reports_anomaly():
+    # If a genuinely critical signal is present we still flag it even when the
+    # numeric probes are missing. An interface that is down is critical alone.
+    telemetry = make_telemetry(
+        cpu_percent=None,
+        memory_percent=None,
+        packet_loss_percent=None,
+        latency_ms=None,
+        interface_status="down",
+    )
+
+    result = diagnose_network_issue(telemetry)
+
+    assert result["severity"] == "high"
+    assert "interface_down" in result["anomalies"]
+    assert result["diagnosis"] != "No significant network anomaly detected."

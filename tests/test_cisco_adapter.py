@@ -3,6 +3,7 @@ import base64
 import httpx
 import pytest
 
+from app.anomaly import detect_anomalies
 from app.cisco import (
     CiscoClient,
     CiscoDevice,
@@ -18,33 +19,33 @@ PASSWORD = "S3cr3t-please-do-not-leak"
 
 
 CPU_BODY = {
-    "Cisco-IOS-XE-process-cpu-oper:cpu-usage": {
-        "five_seconds": 92.5,
-        "one_second": 91.0,
-        "five_minute": 80.0,
-        "one_minute": 78.0,
+    "Cisco-IOS-XE-process-cpu-oper:cpu-utilization": {
+        "five-seconds": 92.5,
+        "one-second": 91.0,
+        "five-minute": 80.0,
+        "one-minute": 78.0,
         "total": 92.5,
     }
 }
 
+# Real IOS XE returns the statistics list under the singular namespaced key.
 MEMORY_BODY = {
-    "Cisco-IOS-XE-memory-oper:memory-statistics": {
-        "memory-statistic": [
-            {"total-memory": 4000000, "used-memory": 3600000},
-        ]
-    }
+    "Cisco-IOS-XE-memory-oper:memory-statistic": [
+        {"total-memory": 4000000, "used-memory": 3600000},
+    ]
 }
 
 INTERFACES_BODY = {
     "Cisco-IOS-XE-interfaces-oper:interfaces": {
         "interface": [
-            {"name": "GigabitEthernet1", "oper-status": "up", "admin-status": "up"},
-            {"name": "GigabitEthernet2", "oper-status": "down", "admin-status": "up"},
+            {"name": "GigabitEthernet1", "oper-status": "if-oper-state-ready", "admin-status": "if-state-up"},
+            {"name": "GigabitEthernet2", "oper-status": "if-oper-state-upper-layer-down", "admin-status": "if-state-up"},
         ]
     }
 }
 
-HOSTNAME_BODY = {"Cisco-IOS-XE-native:native": {"hostname": "sandbox-iosxe"}}
+# Real IOS XE returns the leaf under the namespaced key directly.
+HOSTNAME_BODY = {"Cisco-IOS-XE-native:hostname": "sandbox-iosxe"}
 
 
 def make_device(**overrides) -> CiscoDevice:
@@ -139,11 +140,11 @@ def test_fetch_telemetry_handles_missing_fields():
     routes = {
         "process-cpu-oper": (
             200,
-            {"Cisco-IOS-XE-process-cpu-oper:cpu-usage": {}},
+            {"Cisco-IOS-XE-process-cpu-oper:cpu-utilization": {}},
         ),
         "memory-oper": (
             200,
-            {"Cisco-IOS-XE-memory-oper:memory-statistics": {"memory-statistic": [{}]}},
+            {"Cisco-IOS-XE-memory-oper:memory-statistic": [{}]},
         ),
         "interfaces-oper": (
             200,
@@ -153,7 +154,7 @@ def test_fetch_telemetry_handles_missing_fields():
                 }
             },
         ),
-        "native:native": (200, {"Cisco-IOS-XE-native:native": {}}),
+        "native:native": (200, {"Cisco-IOS-XE-native:hostname": {}}),
     }
     client, device = make_client(routes)
 
@@ -393,3 +394,62 @@ def test_cisco_telemetry_route_returns_503_on_failure(monkeypatch):
     response = client.get("/cisco/telemetry")
 
     assert response.status_code == 503
+
+
+# --------------------------------------------------------------------------
+# IOS XE oper-status enum mapping (regression: "ready" must not be "down")
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("if-oper-state-ready", "up"),
+        ("if-oper-state-up", "up"),
+        ("up", "up"),
+        ("if-oper-state-upper-layer-down", "down"),
+        ("if-oper-state-lower-layer-down", "down"),
+        ("if-oper-state-no-pass", "down"),
+        ("if-oper-state-down", "down"),
+        (None, None),
+    ],
+)
+def test_cisco_oper_status_mapping(raw, expected):
+    from app.cisco.adapter import _cisco_oper_status
+
+    assert _cisco_oper_status(raw) == expected
+
+
+def test_fetch_ready_interface_is_not_flagged_down():
+    routes = {
+        "process-cpu-oper": (200, CPU_BODY),
+        "memory-oper": (200, MEMORY_BODY),
+        "interfaces-oper": (200, INTERFACES_BODY),
+        "native:native": (200, HOSTNAME_BODY),
+    }
+    client, device = make_client(routes)
+
+    telemetry = fetch_telemetry(device=device, client=client, interface="GigabitEthernet1")
+
+    # GigabitEthernet1 reports "if-oper-state-ready" -> must be "up", not "down".
+    assert telemetry.interface_status == "up"
+    assert "interface_down" not in detect_anomalies(telemetry)
+
+
+def test_detect_anomalies_helper_available():
+    from app.anomaly import detect_anomalies
+
+    from app.telemetry import NetworkTelemetry
+
+    healthy = NetworkTelemetry(
+        device_id="sandbox-iosxe",
+        interface="GigabitEthernet1",
+        timestamp="2026-01-01T00:00:00+00:00",
+        cpu_percent=10.0,
+        memory_percent=20.0,
+        bandwidth_mbps=None,
+        packet_loss_percent=None,
+        latency_ms=None,
+        interface_status="up",
+    )
+    assert detect_anomalies(healthy) == []

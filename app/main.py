@@ -149,7 +149,13 @@ def integrations_status() -> IntegrationsResponse:
             last_checked=checked,
         )
         try:
-            connector = make_connector(Vendor(vendor))
+            # Reflect the *current process environment* rather than re-reading
+            # .env: from_env(environ) skips load_dotenv() when ``environ`` is
+            # supplied, so a value cleared (or monkey-patched) in the process
+            # env is respected instead of being re-injected from .env.
+            connector = make_connector(
+                Vendor(vendor), environ=dict(os.environ)
+            )
         except RuntimeError as exc:
             # Both SandboxConnectorError and CiscoTelemetryError derive from
             # RuntimeError and carry a credential-safe "not configured" message.

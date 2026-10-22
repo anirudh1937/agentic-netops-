@@ -263,6 +263,7 @@
     .badge.medium { background: var(--medium-bg); color: var(--medium); }
     .badge.high { background: var(--high-bg); color: var(--high); }
     .badge.neutral { background: var(--neutral-bg); color: var(--neutral); }
+    .badge.unknown { background: var(--neutral-bg); color: var(--muted); }
     .badge.ok { background: var(--ok-bg); color: var(--ok); }
     .badge.muted { background: var(--neutral-bg); color: var(--muted); }
 
@@ -366,6 +367,7 @@
     .alert-row.high { border-left-color: var(--high); }
     .alert-row.medium { border-left-color: var(--medium); }
     .alert-row.normal { border-left-color: var(--neutral); }
+    .alert-row.unknown { border-left-color: var(--muted); }
 
     .alert-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
     .alert-head .device { font-weight: 700; font-size: 14px; }
@@ -713,6 +715,7 @@
         normal: "badge normal",
         medium: "badge medium",
         high: "badge high",
+        unknown: "badge unknown",
       };
       return `<span class="${map[state] || "badge neutral"}">${state || "unknown"}</span>`;
     }
@@ -774,7 +777,9 @@
       let worst = "healthy";
       for (const v of reachable) {
         const sev = (state.telemetry[v.vendor] && state.telemetry[v.vendor].severity) || "normal";
-        const rank = { healthy: 0, medium: 1, high: 2 };
+        // "unknown" means the device is reachable but its telemetry is too
+        // sparse to confirm health, so it must not read as fully "healthy".
+        const rank = { healthy: 0, unknown: 1, medium: 2, high: 3 };
         if ((rank[sev] || 0) > (rank[worst] || 0)) worst = sev;
       }
       return worst;
@@ -789,6 +794,9 @@
         case "no-config": break;
         case "unreachable": summary = "Vendors configured but unreachable"; break;
         case "high": summary = "Critical issues detected"; break;
+        case "unknown":
+          summary = "Some reachable devices report insufficient telemetry";
+          break;
         case "medium": summary = "Attention needed"; break;
         default: summary = "All reachable devices healthy";
       }
@@ -961,7 +969,14 @@
       }
 
       box.innerHTML = findings.map((f) => {
-        const sevClass = f.severity === "high" ? "high" : f.severity === "medium" ? "medium" : "normal";
+        const sevClass =
+          f.severity === "high"
+            ? "high"
+            : f.severity === "medium"
+              ? "medium"
+              : f.severity === "unknown"
+                ? "unknown"
+                : "normal";
         const items = f.anomalies.length
           ? `<ul>${f.anomalies.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>`
           : `<p class="hint">No anomalies on this device.</p>`;
@@ -1071,6 +1086,26 @@
       setBusy(btn, false);
     }
 
+    // Derive a staleness label from the real collection timestamp only.
+    // A missing or unparseable timestamp yields no label so we never invent
+    // freshness. The browser clock is used solely as "now" to compare against
+    // the authoritative `timestamp` supplied by the backend.
+    function freshnessLabel(timestamp) {
+      if (!timestamp) return null;
+      var collected = Date.parse(timestamp);
+      if (Number.isNaN(collected)) return null;
+      var ageMs = Date.now() - collected;
+      if (ageMs < 0) return null; // clock skew: treat as fresh
+      var STALE_MS = 5 * 60 * 1000; // 5 minutes
+      return ageMs > STALE_MS ? "stale" : "fresh";
+    }
+
+    function freshnessBadge(timestamp) {
+      return freshnessLabel(timestamp) === "stale"
+        ? `<span class="badge unknown">stale</span>`
+        : "";
+    }
+
     function renderTelemetryBody(vendor, body) {
       const wrap = els("telemetry-body");
       const tel = body && body.telemetry;
@@ -1088,6 +1123,7 @@
           <span><b>Source:</b> ${sourceLabel}</span>
           <span><b>Interface:</b> ${esc(tel.interface || "n/a")}</span>
           <span><b>Updated:</b> ${esc(tel.timestamp || "—")}</span>
+          ${freshnessBadge(tel.timestamp)}
         </div>`;
 
       const gauges = els("tel-gauges");
@@ -1165,6 +1201,7 @@
           </div>
           ${setStatusBadge(sev)}
           <span class="time">${esc(time)}</span>
+          ${freshnessBadge(time)}
         </div>
         <div class="alerts-list">
           <h3>Anomalies</h3>${anomalies.length ? `<ul>${anomalies.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>` : `<li class="hint">None</li>`}

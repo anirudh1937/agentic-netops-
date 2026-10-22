@@ -98,7 +98,7 @@ class CiscoClient:
         if self._client is not None:
             return self._client
         return httpx.Client(
-            base_url=self._device.host,
+            base_url=f"https://{self._device.host}",
             auth=(self._device.username, self._device.password),
             timeout=self._device.timeout,
             verify=self._device.verify_tls,
@@ -151,6 +151,27 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+def _cisco_oper_status(status_raw) -> str | None:
+    """Translate a Cisco IOS XE ``oper-status`` leaf into ``up``/``down``/None.
+
+    Devices report status via the ietf-interfaces enum values (e.g.
+    ``if-oper-state-ready``), not the literal ``up``/``down`` strings. A ready
+    link must not be misread as an outage, and an explicitly down/not-present
+    state maps to ``"down"`` so the diagnosis engine can act on it. An unknown
+    value returns ``None`` so callers default it to ``"up"`` rather than
+    falsely flagging an outage.
+    """
+
+    if status_raw is None:
+        return None
+    value = str(status_raw).strip().lower()
+    if value in ("up", "if-oper-state-up", "if-oper-state-ready"):
+        return "up"
+    if any(marker in value for marker in ("down", "no-pass", "not-present", "testing", "dormant")):
+        return "down"
+    return None
+
+
 def _get_cpu(client: CiscoClient):
     data = client.get_json(
         "data/Cisco-IOS-XE-process-cpu-oper:cpu-usage/cpu-utilization"
@@ -158,12 +179,14 @@ def _get_cpu(client: CiscoClient):
     if not isinstance(data, dict):
         return None
 
-    usage = data.get("Cisco-IOS-XE-process-cpu-oper:cpu-usage")
+    # IOS XE wraps utilization under the "cpu-utilization" key (not the path
+    # segment "cpu-usage") and reports the 5s sample as "five-seconds".
+    usage = data.get("Cisco-IOS-XE-process-cpu-oper:cpu-utilization")
     if not isinstance(usage, dict):
         return None
 
     try:
-        value = float(usage["five_seconds"])
+        value = float(usage["five-seconds"])
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -177,13 +200,9 @@ def _get_memory(client: CiscoClient):
     if not isinstance(data, dict):
         return None
 
-    # YANG container is "memory-statistics"; the value is a "memory-statistic"
-    # list whose first entry carries total/used memory.
-    stats = data.get("Cisco-IOS-XE-memory-oper:memory-statistics")
-    if not isinstance(stats, dict):
-        return None
-
-    statistics = stats.get("memory-statistic")
+    # IOS XE returns the statistics list under the singular namespaced key,
+    # {"...:memory-statistic": [ {total, used, ...} ]} (note the singular form).
+    statistics = data.get("Cisco-IOS-XE-memory-oper:memory-statistic")
     if isinstance(statistics, list):
         statistics = statistics[0] if statistics else {}
     if not isinstance(statistics, dict):
@@ -230,16 +249,10 @@ def _get_interface(client: CiscoClient, interface: str | None):
         return None, None
 
     name = target.get("name")
-    status_raw = target.get("oper-status")
     # "up" stays up; a present status that is not "up" (down, not-present,
     # disabled) maps to down; an absent status means unknown -> None so the
     # caller defaults it to "up" rather than falsely flagging an outage.
-    if status_raw is None:
-        status = None
-    elif str(status_raw).lower() == "up":
-        status = "up"
-    else:
-        status = "down"
+    status = _cisco_oper_status(target.get("oper-status"))
     return (name or None), status
 
 
@@ -272,13 +285,9 @@ def _get_all_interfaces(client: CiscoClient) -> list[tuple[str | None, str | Non
 
 
 def _interface_status(status_raw):
-    """Translate a YANG ``oper-status`` leaf into ``up``/``down``/``None``."""
+    """Translate a Cisco ``oper-status`` leaf into ``up``/``down``/``None``."""
 
-    if status_raw is None:
-        return None
-    if str(status_raw).lower() == "up":
-        return "up"
-    return "down"
+    return _cisco_oper_status(status_raw)
 
 
 def _get_hostname(client: CiscoClient):
@@ -286,11 +295,14 @@ def _get_hostname(client: CiscoClient):
     if not isinstance(data, dict):
         return None
 
-    native = data.get("Cisco-IOS-XE-native:native")
-    if not isinstance(native, dict):
-        return None
-
-    value = native.get("hostname")
+    # Newer IOS XE builds return the leaf under the namespaced key directly,
+    # {"Cisco-IOS-XE-native:hostname": "test-sunucu"}; older builds nest it
+    # under a "native" container. Support both shapes.
+    value = data.get("Cisco-IOS-XE-native:hostname")
+    if value is None:
+        native = data.get("Cisco-IOS-XE-native:native")
+        if isinstance(native, dict):
+            value = native.get("hostname")
     return value if isinstance(value, str) and value else None
 
 

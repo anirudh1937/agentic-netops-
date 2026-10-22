@@ -34,31 +34,31 @@ PASSWORD = "S3cr3t-please-do-not-leak"
 
 
 CPU_BODY = {
-    "Cisco-IOS-XE-process-cpu-oper:cpu-usage": {
-        "five_seconds": 92.5,
-        "one_second": 91.0,
-        "five_minute": 80.0,
-        "one_minute": 78.0,
+    "Cisco-IOS-XE-process-cpu-oper:cpu-utilization": {
+        "five-seconds": 92.5,
+        "one-second": 91.0,
+        "five-minute": 80.0,
+        "one-minute": 78.0,
         "total": 92.5,
     }
 }
 
 MEMORY_BODY = {
-    "Cisco-IOS-XE-memory-oper:memory-statistics": {
-        "memory-statistic": [{"total-memory": 4000000, "used-memory": 3600000}]
-    }
+    "Cisco-IOS-XE-memory-oper:memory-statistic": [
+        {"total-memory": 4000000, "used-memory": 3600000}
+    ]
 }
 
 INTERFACES_BODY = {
     "Cisco-IOS-XE-interfaces-oper:interfaces": {
         "interface": [
-            {"name": "GigabitEthernet1", "oper-status": "up"},
-            {"name": "GigabitEthernet2", "oper-status": "down"},
+            {"name": "GigabitEthernet1", "oper-status": "if-oper-state-ready"},
+            {"name": "GigabitEthernet2", "oper-status": "if-oper-state-lower-layer-down"},
         ]
     }
 }
 
-HOSTNAME_BODY = {"Cisco-IOS-XE-native:native": {"hostname": "sandbox-iosxe"}}
+HOSTNAME_BODY = {"Cisco-IOS-XE-native:hostname": "sandbox-iosxe"}
 
 
 JP_SYSTEM = {"openconfig-system:system": {"state": {"hostname": "jnpr-core-1"}}}

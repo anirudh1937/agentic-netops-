@@ -53,7 +53,14 @@ class _FakeConnector:
 
 
 def _patch_make_connector(monkeypatch, connector):
-    monkeypatch.setattr("app.main.make_connector", lambda vendor: connector)
+    # The /integrations endpoint now resolves the connector from the current
+    # process environment, so the stand-in must accept (and ignore) the
+    # ``environ`` argument while still returning the fake connector. The
+    # endpoint's branch behaviour is unchanged.
+    monkeypatch.setattr(
+        "app.main.make_connector",
+        lambda vendor, environ=None: connector,
+    )
 
 
 def _clear_sandbox_env(monkeypatch):

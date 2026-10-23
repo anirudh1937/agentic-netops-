@@ -3,6 +3,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from app.agents.agent import root_agent
+from app.diagnosis import diagnose_network_issue
 from app.telemetry import NetworkTelemetry
 
 
@@ -28,6 +29,24 @@ async def analyze_telemetry(telemetry: NetworkTelemetry) -> str:
         session_service=session_service,
     )
 
+    # Reuse the deterministic rule engine so the agent explains findings the
+    # device actually produced, rather than re-deriving or inventing them.
+    # This includes the honest "unknown" case when telemetry is too sparse.
+    diagnosis = diagnose_network_issue(telemetry)
+    diagnosis_anomalies = diagnosis.get("anomalies") or []
+    diagnosis_evidence = diagnosis.get("evidence") or []
+
+    diagnosis_block = (
+        "Deterministic rule-engine diagnosis (use as the basis for your "
+        "explanation; do not invent or contradict it):\n"
+        f"severity={diagnosis.get('severity')}\n"
+        f"anomalies={diagnosis_anomalies}\n"
+        f"summary={diagnosis.get('diagnosis')}\n"
+        "evidence:\n"
+        + "\n".join(f"  - {e}" for e in diagnosis_evidence)
+        + f"\nrecommended_action={diagnosis.get('recommendation')}\n"
+    )
+
     telemetry_prompt = (
         "Analyze this network telemetry using the diagnose_network tool.\n\n"
         f"device_id={telemetry.device_id}\n"
@@ -39,6 +58,8 @@ async def analyze_telemetry(telemetry: NetworkTelemetry) -> str:
         f"packet_loss_percent={telemetry.packet_loss_percent}\n"
         f"latency_ms={telemetry.latency_ms}\n"
         f"interface_status={telemetry.interface_status}\n\n"
+        + diagnosis_block
+        + "\n"
         "Explain the detected issue, severity, evidence, "
         "and recommended action in plain English."
     )

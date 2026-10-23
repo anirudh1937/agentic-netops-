@@ -248,3 +248,122 @@ def test_analyze_telemetry_real_model_integration():
 
     assert isinstance(result, str)
     assert result.strip()
+
+
+# --------------------------------------------------------------------------
+# Deterministic diagnosis is wired into the agent prompt
+# --------------------------------------------------------------------------
+
+
+ANOMALOUS_TELEMETRY = {
+    "device_id": "router-01",
+    "interface": "GigabitEthernet0/1",
+    "timestamp": "2026-08-25T00:00:00Z",
+    "cpu_percent": 92,
+    "memory_percent": 60,
+    "bandwidth_mbps": 100,
+    "packet_loss_percent": 5,
+    "latency_ms": 150,
+    "interface_status": "down",
+}
+
+SPARSE_TELEMETRY = {
+    "device_id": "router-02",
+    "interface": "GigabitEthernet0/2",
+    "timestamp": "2026-08-25T00:00:00Z",
+    "cpu_percent": None,
+    "memory_percent": None,
+    "bandwidth_mbps": None,
+    "packet_loss_percent": None,
+    "latency_ms": None,
+    "interface_status": "up",
+}
+
+
+def _capture_prompt(runner):
+    """Return the combined text of the message passed to the mocked runner."""
+
+    call = runner.run_async.call_args
+    message = call.kwargs["new_message"]
+    return "".join(part.text for part in message.parts)
+
+
+def test_analyze_prompt_includes_deterministic_diagnosis_anomalous():
+    runner = Mock()
+    runner.run_async.return_value = _yield_events("CPU is high.")
+    with patch("app.api.agent.InMemorySessionService") as session_service, patch(
+        "app.api.agent.Runner", return_value=runner
+    ):
+        session_service.return_value.create_session = AsyncMock(
+            return_value=SimpleNamespace(id="session-01")
+        )
+        result = asyncio.run(
+            analyze_telemetry(NetworkTelemetry(**ANOMALOUS_TELEMETRY))
+        )
+
+    assert result == "CPU is high."
+    prompt = _capture_prompt(runner)
+
+    # The deterministic rule engine output is carried into the agent prompt.
+    assert "severity=high" in prompt
+    assert "high_cpu" in prompt
+    assert "interface_down" in prompt
+    # Evidence produced by the engine is surfaced verbatim (not invented).
+    assert "CPU utilization is 92.0%" in prompt
+    assert "The network interface is down." in prompt
+    assert "recommended_action=" in prompt
+
+
+def test_analyze_prompt_includes_deterministic_diagnosis_sparse():
+    runner = Mock()
+    runner.run_async.return_value = _yield_events("Insufficient data.")
+    with patch("app.api.agent.InMemorySessionService") as session_service, patch(
+        "app.api.agent.Runner", return_value=runner
+    ):
+        session_service.return_value.create_session = AsyncMock(
+            return_value=SimpleNamespace(id="session-01")
+        )
+        result = asyncio.run(
+            analyze_telemetry(NetworkTelemetry(**SPARSE_TELEMETRY))
+        )
+
+    assert result == "Insufficient data."
+    prompt = _capture_prompt(runner)
+
+    # Sparse telemetry is reported honestly as "unknown", never fabricated.
+    assert "severity=unknown" in prompt
+    assert "Insufficient telemetry" in prompt
+    assert "recommended_action=" in prompt
+
+
+def test_analyze_prompt_includes_deterministic_diagnosis_normal():
+    runner = Mock()
+    runner.run_async.return_value = _yield_events("Everything looks fine.")
+    with patch("app.api.agent.InMemorySessionService") as session_service, patch(
+        "app.api.agent.Runner", return_value=runner
+    ):
+        session_service.return_value.create_session = AsyncMock(
+            return_value=SimpleNamespace(id="session-01")
+        )
+        result = asyncio.run(
+            analyze_telemetry(
+                NetworkTelemetry(
+                    device_id="router-03",
+                    interface="GigabitEthernet0/3",
+                    timestamp="2026-08-25T00:00:00Z",
+                    cpu_percent=30,
+                    memory_percent=40,
+                    bandwidth_mbps=10,
+                    packet_loss_percent=0,
+                    latency_ms=10,
+                    interface_status="up",
+                )
+            )
+        )
+
+    assert result == "Everything looks fine."
+    prompt = _capture_prompt(runner)
+
+    # Healthy telemetry surfaces a "normal" severity in the prompt.
+    assert "severity=normal" in prompt
+    assert "anomalies=[]" in prompt

@@ -1,63 +1,168 @@
 # Agentic NetOps
 
-Agentic NetOps is a FastAPI-based network operations assistant for ingesting
-telemetry, detecting anomalies, and producing agent-assisted diagnosis using
-Google ADK, MCP, and Gemini.
+[![Tests](https://github.com/anirudh1937/agentic-netops-/actions/workflows/tests.yml/badge.svg)](https://github.com/anirudh1937/agentic-netops-/actions/workflows/tests.yml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.141.1-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-The current focus is a production-ready core API that can later connect to
-enterprise network sandboxes such as Cisco DevNet, Juniper, Arista, or internal
-lab environments.
+**AI-assisted network operations with deterministic diagnosis, vendor-aware
+telemetry connectors, and a safe-by-default polling lifecycle.**
+
+Agentic NetOps is a FastAPI service for ingesting network telemetry, detecting
+anomalies with explainable rules, and optionally using Google ADK, Gemini, and
+MCP tools to produce operational analysis. It includes a Cisco IOS XE RESTCONF
+adapter, vendor connector abstractions for Cisco, Juniper, and Arista, a
+built-in dashboard, and a read-only API for the latest polled telemetry.
+
+## Highlights
+
+- **Explainable first:** deterministic diagnosis rules identify high CPU,
+  memory pressure, packet loss, latency, and interface-down conditions with
+  evidence and recommendations.
+- **Vendor-aware:** a common connector interface keeps device-access logic out
+  of the API layer and makes additional vendors straightforward to add.
+- **Safe by default:** background polling is disabled unless explicitly enabled,
+  and `GET /telemetry/latest` only reads local state.
+- **Agent-ready:** the optional `/analyze` path combines Google ADK, Gemini, and
+  MCP tools with the deterministic diagnosis output.
+- **Offline-testable:** the default test suite uses fakes and mocks. Live device
+  and model integrations are opt-in and skipped by default.
+- **Dashboard included:** a small browser UI exercises telemetry input,
+  diagnosis, agent analysis, and backend health.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Operator[Operator / Dashboard] --> API[FastAPI API]
+    API --> Diagnosis[Rule-based diagnosis]
+    API --> Store[In-memory telemetry store]
+    API --> Agent[ADK agent - optional]
+    Agent --> Gemini[Gemini]
+    Agent --> MCP[MCP tools]
+    Poller[Opt-in telemetry poller] --> Store
+    Poller --> Connectors[Vendor connectors]
+    Connectors --> Devices[Cisco / Juniper / Arista devices]
+```
+
+The polling path is deliberately separate from the read path. The poller is the
+only component that writes polled readings, while the API exposes those readings
+without initiating another poll. See [docs/architecture.md](docs/architecture.md)
+for component-level details.
+
+## Features
+
+### Telemetry and diagnosis
+
+- Validates the shared `NetworkTelemetry` model used by the API, dashboard, and
+  agent tools.
+- Runs a deterministic diagnosis engine that returns severity, anomalies,
+  evidence, and a recommended action.
+- Treats unavailable metrics as `null` instead of zero-filling them, so a
+  diagnosis only reflects data the device actually reported.
+
+### Vendor connectors
+
+- Cisco IOS XE RESTCONF adapter with read-only telemetry and inventory support.
+- Shared connector interface for Cisco, Juniper, and Arista.
+- Missing configuration is reported by `/integrations` and the poller instead
+  of being treated as a healthy device.
+- Credential-safe error handling keeps secrets out of API responses and stored
+  readings.
+
+### Controlled polling
+
+- Disabled by default; enabled with `NETOPS_POLL_ENABLED=true`.
+- One poller task per application process, with non-overlapping poll cycles.
+- Readings keyed by `(vendor, device_id, interface)`.
+- Latest poll attempt is tracked separately from the last successful
+  measurement.
+- A first-poll failure does not fabricate a device identity.
+- In-memory store by design: data resets when the process restarts.
+
+### Optional AI and MCP
+
+- `/analyze` uses the configured Google ADK/Gemini backend to produce a
+  plain-English operational summary.
+- The MCP server exposes `check_device_health` for the same core telemetry
+  fields.
+- If the agent backend is unavailable, the endpoint fails cleanly with HTTP
+  `503` rather than returning a partial response.
 
 ## Quick start
 
-1. Create and activate a virtual environment.
-2. Install dependencies:
-   `pip install -r requirements.txt`
-3. Configure any required model credentials in `.env`.
-4. Run the app:
-   `uvicorn app.main:app --reload`
-5. Open the dashboard:
-   `http://127.0.0.1:8000/dashboard`
+### Prerequisites
 
-## Run tests
+- Python 3.12+
+- A virtual environment is recommended.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+uvicorn app.main:app --reload
 ```
+
+On macOS/Linux:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env
+uvicorn app.main:app --reload
+```
+
+Open:
+
+- Dashboard: <http://127.0.0.1:8000/dashboard>
+- Interactive API docs: <http://127.0.0.1:8000/docs>
+- Health check: <http://127.0.0.1:8000/health>
+
+The application starts without Cisco credentials, Gemini credentials, or any
+live device access. Configure only the integrations you intend to use.
+
+## Configuration
+
+Copy `.env.example` to `.env` and fill in only the values you need. Never commit
+`.env`.
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | Optional | Enables the `/analyze` agent path. |
+| `CISCO_SANDBOX_HOST` | Optional | Cisco IOS XE RESTCONF host. |
+| `CISCO_SANDBOX_USERNAME` | Optional | Cisco RESTCONF username. |
+| `CISCO_SANDBOX_PASSWORD` | Optional | Cisco RESTCONF password. |
+| `CISCO_SANDBOX_API_ROOT` | Optional | RESTCONF API root; defaults to `/restconf`. |
+| `CISCO_SANDBOX_VERIFY_TLS` | Optional | Set to `true` to verify the device TLS certificate. |
+| `NETOPS_POLL_ENABLED` | Optional | Set to `true` to start background polling. Default: disabled. |
+
+The example file also contains `GOOGLE_CLOUD_PROJECT` and
+`CISCO_SANDBOX_INTERFACE`; the current application does not read those values
+directly. Select the Cisco interface with the `interface` query parameter.
+
+Juniper and Arista connectors read `JUNIPER_SANDBOX_*` and `ARISTA_SANDBOX_*`
+environment variables when those integrations are used.
 
 ## API
 
-### `GET /`
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/` | Service banner. |
+| `GET` | `/health` | Readiness probe. |
+| `GET` | `/dashboard` | Built-in dashboard. |
+| `POST` | `/telemetry` | Validate and echo a telemetry payload. |
+| `GET` | `/telemetry/latest` | Read the latest stored polled readings. Never starts a poll. |
+| `POST` | `/diagnose` | Run the deterministic diagnosis engine. |
+| `GET` | `/cisco/telemetry` | Fetch Cisco telemetry and run diagnosis. |
+| `GET` | `/vendors` | List registered vendor connectors. |
+| `GET` | `/vendors/{vendor}/telemetry` | Fetch vendor telemetry and run diagnosis. |
+| `GET` | `/vendors/{vendor}/inventory` | Return a device/interface inventory snapshot. |
+| `GET` | `/integrations` | Report backend, agent, MCP, and vendor connectivity/inventory status. |
+| `POST` | `/analyze` | Run the optional ADK/Gemini analysis path. |
 
-Basic service banner.
-
-Response:
-
-```json
-{
-  "message": "Agentic NetOps is running"
-}
-```
-
-### `GET /health`
-
-Health endpoint for readiness checks, deployment probes, and sandbox
-connectivity validation.
-
-Response:
-
-```json
-{
-  "status": "ok",
-  "service": "agentic-netops"
-}
-```
-
-### `POST /telemetry`
-
-Validates and echoes a telemetry payload.
-
-Request:
+### Example: diagnosis
 
 ```json
 {
@@ -73,91 +178,111 @@ Request:
 }
 ```
 
-### `POST /diagnose`
+Send it to `POST /diagnose` to receive severity, anomalies, evidence, and a
+recommended action.
 
-Runs the deterministic rule-based diagnosis engine and returns structured
-output for dashboards and automation.
+### Example: latest telemetry
 
-Successful response:
-
-```json
-{
-  "device_id": "router-01",
-  "interface": "GigabitEthernet0/1",
-  "severity": "high",
-  "diagnosis": "Network health degradation detected.",
-  "anomalies": [
-    "high_cpu",
-    "high_packet_loss",
-    "high_latency"
-  ],
-  "evidence": [
-    "CPU utilization is 92.0%.",
-    "Packet loss is 5.0%.",
-    "Latency is 150.0 ms."
-  ],
-  "recommendation": "Inspect CPU-intensive processes and device resource utilization. Inspect interface errors, congestion, and link quality. Investigate congestion, routing path, and interface performance."
-}
-```
-
-### `POST /analyze`
-
-Runs the ADK agent against telemetry and returns a stable API response.
-
-Successful response:
+`GET /telemetry/latest` returns already-stored readings:
 
 ```json
 {
-  "device_id": "router-01",
-  "interface": "GigabitEthernet0/1",
-  "status": "completed",
-  "analysis": "High CPU usage, elevated packet loss, and high latency detected."
+  "readings": [],
+  "count": 0,
+  "generated_at": "2026-10-29T00:00:00+00:00"
 }
 ```
 
-If the agent backend fails or returns no usable response, the endpoint returns
-HTTP `503`.
+Each non-empty reading includes the vendor/device/interface identity, the latest
+poll outcome, the last successful measurement, failure count, and any sanitized
+error.
 
-## Diagnosis rules
+## Polling lifecycle
 
-The local diagnosis engine detects:
+Polling is intentionally opt-in:
 
-- high CPU usage
-- high memory usage
-- high packet loss
-- high latency
-- interface down
+```powershell
+$env:NETOPS_POLL_ENABLED = "true"
+uvicorn app.main:app --reload
+```
 
-Diagnosis responses include a stable schema with device identity, severity,
-detected anomalies, evidence, and recommended action. This keeps the output
-usable by dashboards, automation jobs, and future sandbox integrations.
+When enabled, the FastAPI lifespan creates one application-owned store and
+poller, starts the poller, and stops it cleanly on shutdown. When disabled, the
+poller object exists but no background task is started.
 
-## MCP integration
+The current implementation supports one configured connector per vendor.
+Multi-device polling and persistent storage are future work; multi-worker
+deployments are not supported by the current in-memory store.
 
-The MCP server exposes `check_device_health`, which analyzes the same telemetry
-shape and returns device health plus detected anomalies. The ADK agent can use
-both the local diagnosis tool and the MCP tool when producing analysis.
+## Testing
 
-## Dashboard
+Run the offline suite:
 
-The built-in dashboard is available at `/dashboard`. It provides:
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
 
-- telemetry input for device, interface, utilization, packet loss, latency, and
-  interface state
-- deterministic diagnosis summary with severity, anomalies, evidence, and
-  recommendation
-- agent explanation panel for plain-English operational analysis
-- backend health indicator
+or:
+
+```bash
+python -m pytest -q
+```
+
+The default suite does not contact Cisco, Juniper, Arista, Gemini, or any other
+external service. Live integration tests are opt-in and are skipped unless the
+corresponding environment flags are set. CI runs only the offline suite.
 
 ## Project structure
 
-- `app/` contains the FastAPI application and agent modules
-- `tests/` contains automated tests
-- `docs/` will hold implementation notes and architecture diagrams
+```text
+app/
+  api/                  FastAPI request/response helpers
+  cisco/                Cisco IOS XE RESTCONF adapter
+  connectors/           Vendor connector abstraction and implementations
+  dashboard/            Built-in browser dashboard
+  mcp/                  MCP server and network tools
+  agents/               Google ADK agent configuration and tools
+  diagnosis.py          Deterministic diagnosis rules
+  telemetry_poller.py   Controlled background polling
+  telemetry_store.py    In-memory telemetry store
+  main.py               FastAPI application and lifespan
+tests/                  Offline and opt-in integration tests
+docs/                   Architecture and implementation notes
+.github/workflows/      GitHub Actions CI
+```
 
-## Future work
+## Security
 
-- Add structured device inventory and sandbox connector interfaces.
-- Add Cisco sandbox integration workflows.
-- Add authentication and request tracing.
-- Add optional DGX Spark / Qwen backend support.
+- `.env` is ignored and must never be committed.
+- RESTCONF access is read-only; this project does not perform remediation.
+- Device credentials are never returned. Connector errors use credential-safe
+  messages, and unexpected exception details are reduced to class names or
+  stable, sanitized messages.
+- `GET /telemetry/latest` never triggers a network request.
+- Endpoints such as `/cisco/telemetry`, `/vendors/{vendor}/telemetry`, and
+  `/integrations` contact configured devices and should be protected before
+  exposure to untrusted networks.
+- The optional `/analyze` path sends submitted telemetry to the configured
+  model backend. Do not submit sensitive production data unless that is
+  acceptable for your environment.
+
+For vulnerability reporting, see [SECURITY.md](SECURITY.md).
+
+## Roadmap
+
+- Add authentication and authorization for externally exposed APIs.
+- Add a persistent telemetry store while preserving the current freshness
+  semantics.
+- Support multiple devices per vendor.
+- Expand vendor-specific telemetry and inventory coverage.
+- Add request tracing and structured observability.
+- Add deployment packaging and example reverse-proxy configuration.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for local
+setup, testing, and pull-request guidance.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).

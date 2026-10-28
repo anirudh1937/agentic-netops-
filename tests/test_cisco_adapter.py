@@ -453,3 +453,170 @@ def test_detect_anomalies_helper_available():
         interface_status="up",
     )
     assert detect_anomalies(healthy) == []
+
+
+# --------------------------------------------------------------------------
+# Real adapter -> GET /cisco/telemetry route (offline, MockTransport only)
+# --------------------------------------------------------------------------
+
+
+# Newer IOS XE returns the hostname under the namespaced key directly.
+ROUTE_HOSTNAME_BODY = {"Cisco-IOS-XE-native:hostname": "sandbox-iosxe-1"}
+
+ROUTE_INTERFACES_BODY = {
+    "Cisco-IOS-XE-interfaces-oper:interfaces": {
+        "interface": [
+            {"name": "GigabitEthernet0/1", "oper-status": "if-oper-state-ready"},
+            {"name": "GigabitEthernet0/2", "oper-status": "down"},
+        ]
+    }
+}
+
+
+def _transport_from_routes(routes):
+    """Return an ``httpx.MockTransport`` keyed by URL-path substring.
+
+    Mirrors ``make_client`` so the same realistic payloads can be served for
+    the route integration tests without a live device.
+    """
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        for key, value in routes.items():
+            if key in path:
+                status, body = value
+                if body is None:
+                    return httpx.Response(status, content=b"")
+                return httpx.Response(status, json=body)
+        return httpx.Response(404, json={"errors": [{"description": "not found"}]})
+
+    return httpx.MockTransport(responder)
+
+
+def test_cisco_telemetry_route_with_real_adapter(monkeypatch):
+    """GET /cisco/telemetry against the REAL adapter + diagnosis.
+
+    Only the device configuration and the HTTP transport are injected.
+    ``fetch_telemetry`` and ``diagnose_network_issue`` are NOT mocked, so the
+    full path (RESTCONF parsing -> NetworkTelemetry -> rule diagnosis) is
+    exercised through the FastAPI route.
+    """
+
+    from fastapi.testclient import TestClient
+
+    from app import cisco as cisco_adapter
+    from app.main import app
+
+    routes = {
+        "process-cpu-oper": (200, CPU_BODY),
+        "memory-oper": (200, MEMORY_BODY),
+        "interfaces-oper": (200, ROUTE_INTERFACES_BODY),
+        "native:native": (200, ROUTE_HOSTNAME_BODY),
+    }
+    transport = _transport_from_routes(routes)
+
+    # Inject the configured device via the environment-construction seam.
+    monkeypatch.setattr(
+        cisco_adapter.CiscoDevice,
+        "from_env",
+        classmethod(lambda cls, environ=None: make_device()),
+    )
+
+    # Inject the mocked transport by wrapping the httpx client the adapter
+    # builds. The real CiscoClient (get_json, parsing) stays untouched.
+    _orig_client = httpx.Client
+
+    def _patched_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        return _orig_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", _patched_client)
+
+    client = TestClient(app)
+    response = client.get(
+        "/cisco/telemetry", params={"interface": "GigabitEthernet0/2"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+
+    # Source + normalized telemetry from the real adapter parsing.
+    assert body["source"] == "cisco"
+    telemetry = body["telemetry"]
+    assert telemetry["device_id"] == "sandbox-iosxe-1"
+    assert telemetry["interface"] == "GigabitEthernet0/2"
+    assert telemetry["cpu_percent"] == 92.5
+    assert telemetry["memory_percent"] == 90.0
+    assert telemetry["interface_status"] == "down"
+    # Read-only metrics stay null rather than being zero-filled.
+    assert telemetry["packet_loss_percent"] is None
+    assert telemetry["latency_ms"] is None
+    assert telemetry["bandwidth_mbps"] is None
+
+    # Diagnosis ran over the live-normalized telemetry (interface_down is
+    # a critical anomaly -> "high" severity), not a fabricated value.
+    assert body["severity"] == "high"
+    assert "interface_down" in body["anomalies"]
+    assert "high_cpu" in body["anomalies"]
+    assert body["recommendation"]
+
+
+def test_cisco_telemetry_route_sparse_reports_unknown(monkeypatch):
+    """Sparse device telemetry yields honest \"unknown\" severity, not 0s."""
+
+    from fastapi.testclient import TestClient
+
+    from app import cisco as cisco_adapter
+    from app.main import app
+
+    sparse_cpu = {"Cisco-IOS-XE-process-cpu-oper:cpu-utilization": {}}
+    sparse_memory = {"Cisco-IOS-XE-memory-oper:memory-statistic": []}
+    sparse_interfaces = {
+        "Cisco-IOS-XE-interfaces-oper:interfaces": {
+            "interface": [{"name": "GigabitEthernet0/1"}]
+        }
+    }
+
+    routes = {
+        "process-cpu-oper": (200, sparse_cpu),
+        "memory-oper": (200, sparse_memory),
+        "interfaces-oper": (200, sparse_interfaces),
+        "native:native": (200, ROUTE_HOSTNAME_BODY),
+    }
+    transport = _transport_from_routes(routes)
+
+    monkeypatch.setattr(
+        cisco_adapter.CiscoDevice,
+        "from_env",
+        classmethod(lambda cls, environ=None: make_device()),
+    )
+
+    _orig_client = httpx.Client
+
+    def _patched_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        return _orig_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", _patched_client)
+
+    client = TestClient(app)
+    response = client.get("/cisco/telemetry")
+
+    assert response.status_code == 200
+    body = response.json()
+
+    telemetry = body["telemetry"]
+    assert telemetry["device_id"] == "sandbox-iosxe-1"
+    # Interface has no oper-status -> defaults to "up" (not a false outage).
+    assert telemetry["interface_status"] == "up"
+    # No health probes arrived, so nothing is fabricated as 0.
+    assert telemetry["cpu_percent"] is None
+    assert telemetry["memory_percent"] is None
+    assert telemetry["packet_loss_percent"] is None
+    assert telemetry["latency_ms"] is None
+
+    # Honest diagnosis: insufficient telemetry -> "unknown".
+    assert body["severity"] == "unknown"
+    assert "Insufficient telemetry" in body["diagnosis"]
+    assert body["anomalies"] == []
+    assert body["recommendation"]

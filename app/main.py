@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,9 +28,54 @@ from app.connectors import (
 from app.diagnosis import DiagnosisResult, diagnose_network_issue
 from app.inventory import Vendor
 from app.telemetry import NetworkTelemetry
+from app.telemetry_poller import TelemetryPoller
+from app.telemetry_store import TelemetryStore
 
 
-app = FastAPI(title="Agentic NetOps")
+@asynccontextmanager
+async def app_lifespan(app: FastAPI):
+    """Application lifespan for telemetry store and poller.
+
+    Creates one application-owned :class:`TelemetryStore` and builds a
+    :class:`TelemetryPoller` from environment configuration via
+    :func:`TelemetryPoller.from_config`. Polling is disabled by default and is
+    only started when ``NETOPS_POLL_ENABLED`` is set to a truthy value.
+
+    The store and poller are attached to ``app.state`` so the
+    ``GET /telemetry/latest`` endpoint can read stored readings without
+    initiating any poll or network call.
+
+    On shutdown, the poller is stopped cleanly if it was started.
+    """
+
+    store = TelemetryStore()
+    poller = TelemetryPoller.from_config(store, enabled=_polling_enabled())
+
+    app.state.telemetry_store = store
+    app.state.telemetry_poller = poller
+
+    try:
+        if poller.enabled:
+            await poller.start()
+        yield
+    finally:
+        if poller.is_running:
+            await poller.stop()
+
+
+def _polling_enabled() -> bool:
+    """Return whether background polling is enabled.
+
+    Controlled by the ``NETOPS_POLL_ENABLED`` environment variable. Disabled
+    by default so importing or constructing the application never starts
+    polling or makes a live network call.
+    """
+
+    value = os.environ.get("NETOPS_POLL_ENABLED", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+app = FastAPI(title="Agentic NetOps", lifespan=app_lifespan)
 DASHBOARD_PATH = Path(__file__).parent / "dashboard" / "index.html"
 
 
@@ -54,6 +100,34 @@ def health_check() -> HealthResponse:
 @app.post("/telemetry", response_model=NetworkTelemetry)
 def receive_telemetry(telemetry: NetworkTelemetry) -> NetworkTelemetry:
     return ingest_telemetry(telemetry)
+
+
+@app.get("/telemetry/latest")
+def read_latest_telemetry() -> dict:
+    """Return the latest stored telemetry readings from the poller.
+
+    This is read-only: it only returns data already persisted in the
+    application-owned :class:`TelemetryStore`. It never initiates a poll or
+    performs any external network request.
+
+    The response includes, for each stored reading, the vendor/device/interface
+    identity, the latest poll attempt and its outcome, the last successful
+    measurement and its timestamps, consecutive failure count, and any
+    sanitized error. This lets consumers distinguish fresh (recently and
+    successfully collected) from stale or unavailable data.
+
+    When no readings have been stored, returns an empty ``readings`` list with
+    HTTP ``200``.
+    """
+
+    store: TelemetryStore = app.state.telemetry_store
+    readings = [reading.model_dump() for reading in store.get_all()]
+
+    return {
+        "readings": readings,
+        "count": len(readings),
+        "generated_at": _now_iso(),
+    }
 
 
 @app.post("/diagnose", response_model=DiagnosisResult)

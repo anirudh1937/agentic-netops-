@@ -23,6 +23,11 @@ Design notes
   cycle.
 * Clean shutdown: :meth:`stop` cancels the background task and waits for it
   to finish. The lock is not replaced, so no poll is left mid-flight.
+* Observable status: :meth:`status` returns an immutable snapshot of the
+  poller configuration and the last cycle, including a sanitized error.
+* Loop resilience: unexpected exceptions from a poll cycle are recorded and
+  contained so later cycles still run; ``asyncio.CancelledError`` is not
+  suppressed.
 * Credential safety: connector error messages are logged only through the
   credential-safe :func:`_safe_error_message` helper; arbitrary exception
   text is never logged verbatim.
@@ -32,8 +37,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from app.cisco import CiscoTelemetryError
 from app.connectors import (
@@ -50,10 +56,20 @@ from app.diagnosis import diagnose_network_issue
 
 logger = logging.getLogger(__name__)
 
-#: Vendors whose connectors are known to be unconfigured (missing required
-#: environment variables). Tracked so configuration problems are reported
-#: once rather than on every poll cycle.
-_UNCONFIGURED_VENDORS: set[str] = set()
+
+@dataclass(frozen=True)
+class PollerStatus:
+    """Immutable snapshot of the poller's configuration and last cycle."""
+
+    enabled: bool
+    running: bool
+    interval_seconds: float
+    configured_vendors: tuple[str, ...]
+    unconfigured_vendors: tuple[str, ...]
+    last_cycle_started_at: Optional[str]
+    last_cycle_finished_at: Optional[str]
+    last_cycle_outcome: Optional[Literal["success", "degraded", "error"]]
+    last_error: Optional[str]
 
 
 def _safe_error_message(exc: BaseException) -> str:
@@ -69,6 +85,12 @@ def _safe_error_message(exc: BaseException) -> str:
     if isinstance(exc, SandboxConnectorError):
         return str(exc)
     return f"{type(exc).__name__}"
+
+
+def _now_iso() -> str:
+    """Return the current UTC time in the project's wire format."""
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _is_missing_configuration(exc: BaseException) -> bool:
@@ -129,6 +151,21 @@ class TelemetryPoller:
         # composite identity as the last success rather than fabricating a
         # device_id.
         self._last_identity: dict[str, tuple[str, str]] = {}
+
+        # Vendors skipped because their required environment configuration was
+        # missing. This is instance-scoped so one poller's configuration
+        # failures never leak into another poller's status.
+        self._unconfigured_vendors: set[str] = set()
+
+        # Last poll-cycle status. Timestamps and outcomes are only updated
+        # after a cycle starts or finishes; the status endpoint reads them
+        # without triggering polling.
+        self._last_cycle_started_at: Optional[str] = None
+        self._last_cycle_finished_at: Optional[str] = None
+        self._last_cycle_outcome: Optional[
+            Literal["success", "degraded", "error"]
+        ] = None
+        self._last_error: Optional[str] = None
 
     # ------------------------------------------------------------------ #
     # Factory: build from environment configuration
@@ -212,7 +249,7 @@ class TelemetryPoller:
                 # adapter raises CiscoTelemetryError (not SandboxConnectorError)
                 # when its host is unconfigured, so it must be caught explicitly
                 # here without hiding unrelated programming errors.
-                _UNCONFIGURED_VENDORS.add(vendor_id)
+                poller._unconfigured_vendors.add(vendor_id)
                 logger.warning(
                     "Skipping vendor '%s': %s",
                     vendor_id,
@@ -227,7 +264,7 @@ class TelemetryPoller:
     def unconfigured_vendors(self) -> set[str]:
         """Vendor identifiers that were skipped due to missing configuration."""
 
-        return set(_UNCONFIGURED_VENDORS)
+        return set(self._unconfigured_vendors)
 
     # ------------------------------------------------------------------ #
     # Configuration introspection
@@ -243,6 +280,26 @@ class TelemetryPoller:
     @property
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    def status(self) -> PollerStatus:
+        """Return an immutable snapshot of the poller state.
+
+        Reading the snapshot never triggers a poll and never contacts a
+        device. Collection fields are tuples so callers cannot mutate the
+        poller's internal state through the returned value.
+        """
+
+        return PollerStatus(
+            enabled=self._enabled,
+            running=self.is_running,
+            interval_seconds=self._interval_seconds,
+            configured_vendors=tuple(sorted(self._connectors)),
+            unconfigured_vendors=tuple(sorted(self._unconfigured_vendors)),
+            last_cycle_started_at=self._last_cycle_started_at,
+            last_cycle_finished_at=self._last_cycle_finished_at,
+            last_cycle_outcome=self._last_cycle_outcome,
+            last_error=self._last_error,
+        )
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -310,7 +367,26 @@ class TelemetryPoller:
             return
 
         async with self._lock:
-            await self._poll_all()
+            self._last_cycle_started_at = _now_iso()
+            self._last_cycle_finished_at = None
+            self._last_cycle_outcome = None
+            self._last_error = None
+
+            errors = await self._poll_all()
+
+            self._last_cycle_finished_at = _now_iso()
+            if errors:
+                self._last_cycle_outcome = "degraded"
+                # Keep the poller-level error free of hostnames and raw
+                # connector text. Detailed sanitized vendor errors remain in
+                # the stored readings exposed by GET /telemetry/latest.
+                self._last_error = (
+                    "1 vendor poll failed."
+                    if len(errors) == 1
+                    else f"{len(errors)} vendor polls failed."
+                )
+            else:
+                self._last_cycle_outcome = "success"
 
     # ------------------------------------------------------------------ #
     # Internal loop
@@ -322,16 +398,31 @@ class TelemetryPoller:
                     self._stop_event.wait(), timeout=self._interval_seconds
                 )
             except asyncio.TimeoutError:
-                # Interval elapsed: attempt a poll cycle.
-                await self.poll_once()
+                # Interval elapsed: attempt a poll cycle. Unexpected cycle
+                # failures are recorded and contained so later cycles still run.
+                try:
+                    await self.poll_once()
+                except Exception as exc:  # noqa: BLE001 - keep the poller alive
+                    safe_error = _safe_error_message(exc)
+                    self._last_cycle_finished_at = _now_iso()
+                    self._last_cycle_outcome = "error"
+                    self._last_error = safe_error
+                    logger.warning(
+                        "Unexpected telemetry poll cycle failure: %s",
+                        safe_error,
+                    )
 
-    async def _poll_all(self) -> None:
+    async def _poll_all(self) -> list[str]:
+        errors: list[str] = []
         for vendor, connector in self._connectors.items():
-            await self._poll_vendor(vendor, connector)
+            error = await self._poll_vendor(vendor, connector)
+            if error is not None:
+                errors.append(error)
+        return errors
 
     async def _poll_vendor(
         self, vendor: str, connector: SandboxConnector
-    ) -> None:
+    ) -> Optional[str]:
         # Resolve a stable identity for this target. The connector exposes
         # ``host`` (public management address only, never a credential) and
         # ``vendor``. The actual device_id/interface are only known after a
@@ -343,7 +434,8 @@ class TelemetryPoller:
         # identity as the last success. If we have never succeeded for this
         # vendor, there is no verified identity to record against -- do not
         # create a store record with a fabricated device ID. The failure is
-        # still logged (sanitized) so operators can see the attempt failed.
+        # still returned (sanitized) and logged so operators can see the
+        # attempt failed.
         host = getattr(connector, "host", None) or "unknown"
         known = self._last_identity.get(vendor)
         if known is not None:
@@ -358,11 +450,12 @@ class TelemetryPoller:
             telemetry = connector.fetch_telemetry()
         except SandboxConnectorError as exc:
             # Credential-safe error already; log only the safe message.
+            safe_error = _safe_error_message(exc)
             logger.warning(
                 "Poll failed for vendor=%s host=%s: %s",
                 vendor,
                 host,
-                _safe_error_message(exc),
+                safe_error,
             )
             # Only record a failure reading when we have a verified identity
             # to attach it to. A first-poll failure has no real device_id/
@@ -373,16 +466,17 @@ class TelemetryPoller:
                     device_id=device_id,
                     interface=interface,
                     attempt_at=attempt_at,
-                    error=_safe_error_message(exc),
+                    error=safe_error,
                 )
-            return
+            return safe_error
         except Exception as exc:  # noqa: BLE001 - isolate per-vendor failures
             # Never log arbitrary exception text (may contain secrets).
+            safe_error = _safe_error_message(exc)
             logger.warning(
                 "Poll failed unexpectedly for vendor=%s host=%s: %s",
                 vendor,
                 host,
-                _safe_error_message(exc),
+                safe_error,
             )
             if device_id is not None:
                 self._record_failure(
@@ -390,9 +484,9 @@ class TelemetryPoller:
                     device_id=device_id,
                     interface=interface,
                     attempt_at=attempt_at,
-                    error=f"{type(exc).__name__}",
+                    error=safe_error,
                 )
-            return
+            return safe_error
 
         # Successful fetch: compute server-side collection time and diagnosis.
         fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -418,6 +512,7 @@ class TelemetryPoller:
             telemetry.interface,
             diagnosis.get("severity"),
         )
+        return None
 
     def _record_failure(
         self,

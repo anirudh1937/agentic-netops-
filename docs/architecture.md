@@ -42,6 +42,28 @@ This path is local and does not require an external model.
 returns the stored readings. It does not call `poll_once()`, start a poller, or
 contact a device.
 
+### Read poller status
+
+`GET /telemetry/status` reads the application-owned `TelemetryPoller` from
+`request.app.state` and returns an immutable snapshot of its configuration and
+last completed cycle. It does not call `poll_once()`, start a poller, or contact a
+device. HTTP `503` is returned only when no poller is available.
+
+The snapshot includes:
+
+- `enabled` and `running`
+- `interval_seconds`
+- `configured_vendors` and `unconfigured_vendors`
+- `last_cycle_started_at` and `last_cycle_finished_at`
+- `last_cycle_outcome` (`success`, `degraded`, or `error`)
+- `last_error`, a credential-safe summary (count-only for `degraded` cycles,
+  exception class for `error` cycles)
+
+Detailed per-vendor errors are available in the stored readings returned by
+`GET /telemetry/latest` only when a verified reading identity exists. First-poll
+failures without a verified device identity are logged but do not create a store
+reading.
+
 ### Fetch live vendor telemetry
 
 `GET /cisco/telemetry` and `GET /vendors/{vendor}/telemetry` resolve a connector
@@ -65,6 +87,7 @@ sequenceDiagram
     participant Connector as Vendor connector
     participant Store as TelemetryStore
     participant API as GET /telemetry/latest
+    participant Status as GET /telemetry/status
 
     App->>Poller: from_config(store, enabled)
     alt NETOPS_POLL_ENABLED is true
@@ -73,6 +96,7 @@ sequenceDiagram
             Poller->>Connector: fetch_telemetry()
             Connector-->>Poller: telemetry or error
             Poller->>Store: record success or failure
+            Note over Poller: record cycle timestamps, outcome, sanitized error
         end
     else polling disabled
         App->>Poller: no background task
@@ -80,10 +104,22 @@ sequenceDiagram
 
     API->>Store: get_all()
     Store-->>API: stored readings
+
+    Status->>Poller: status()
+    Poller-->>Status: immutable snapshot
 ```
 
 The poller is disabled by default. When disabled, the application still creates
 the store and poller objects but does not start a background task.
+
+A cycle that completes with one or more vendor failures is recorded as
+`degraded`; a cycle with no failures is `success`. If an unexpected exception
+escapes `poll_once()`, the loop records `error` with a credential-safe
+`last_error`, keeps the task alive, and waits for the next interval. The loop
+does not restart itself and does not suppress cancellation.
+
+The poller's configuration and last-cycle status are exposed through
+`GET /telemetry/status`. Reading the snapshot does not initiate a cycle.
 
 ## Store semantics
 
@@ -116,5 +152,6 @@ deployments are not supported by the current in-memory design.
   names or stable messages.
 - A first-poll failure without a verified device identity does not create a
   fabricated reading.
-- The latest-telemetry read path never triggers polling or network access.
+- The latest-telemetry and poller-status read paths never trigger polling or
+  network access.
 - Live integration tests and live-test flags are not part of CI.

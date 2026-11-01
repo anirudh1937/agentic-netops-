@@ -6,6 +6,7 @@ external service is contacted. The poller is tested in isolation with a fake
 """
 
 import asyncio
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Optional
@@ -15,6 +16,7 @@ import pytest
 
 from app.cisco import CiscoTelemetryError
 from app.connectors.base import SandboxConnector, SandboxConnectorError
+from app.diagnosis import diagnose_network_issue
 from app.inventory import Vendor
 from app.telemetry import NetworkTelemetry
 from app.telemetry_poller import TelemetryPoller
@@ -580,3 +582,237 @@ def test_stop_idempotent_after_start():
         assert not poller.is_running
 
     asyncio.run(run())
+
+
+# -------------------------------------------------------------------------- #
+# Poller status snapshots
+# -------------------------------------------------------------------------- #
+
+
+def test_poller_status_tracks_successful_cycle():
+    store = TelemetryStore()
+    poller = TelemetryPoller(
+        store=store,
+        connectors={"cisco": _FakeConnector(telemetry=_make_telemetry())},
+        enabled=True,
+        interval_seconds=30.0,
+    )
+
+    asyncio.run(poller.poll_once())
+
+    status = poller.status()
+    assert status.enabled is True
+    assert status.running is False
+    assert status.interval_seconds == 30.0
+    assert status.configured_vendors == ("cisco",)
+    assert status.unconfigured_vendors == ()
+    assert status.last_cycle_started_at is not None
+    assert status.last_cycle_started_at.endswith("+00:00")
+    assert status.last_cycle_finished_at is not None
+    assert status.last_cycle_finished_at.endswith("+00:00")
+    assert status.last_cycle_outcome == "success"
+    assert status.last_error is None
+
+
+def test_poller_status_tracks_degraded_cycle():
+    store = TelemetryStore()
+    bad = _FakeConnector(
+        host="https://secret-host.example",
+        exc=SandboxConnectorError(
+            "Could not reach device at 'secret-host.example'."
+        ),
+    )
+    good = _FakeConnector(
+        host="https://good.device",
+        telemetry=_make_telemetry(device_id="good-device"),
+    )
+    poller = TelemetryPoller(
+        store=store,
+        connectors={"cisco": bad, "arista": good},
+        enabled=True,
+    )
+
+    asyncio.run(poller.poll_once())
+
+    status = poller.status()
+    assert status.configured_vendors == ("arista", "cisco")
+    assert status.last_cycle_outcome == "degraded"
+    assert status.last_error == "1 vendor poll failed."
+    assert "secret-host.example" not in repr(status)
+    assert len(store) == 1
+    assert store.get("arista", "good-device", "GigabitEthernet0/1") is not None
+
+
+def test_poller_loop_survives_unexpected_exception(monkeypatch, caplog):
+    """An unexpected cycle failure must not kill the background loop."""
+    store = TelemetryStore()
+    connector = _FakeConnector(telemetry=_make_telemetry())
+    poller = TelemetryPoller(
+        store=store,
+        connectors={"cisco": connector},
+        enabled=True,
+        interval_seconds=0.01,
+    )
+
+    calls = 0
+
+    def _flaky_diagnose(telemetry):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("token=S3cr3t")
+        return diagnose_network_issue(telemetry)
+
+    monkeypatch.setattr(
+        "app.telemetry_poller.diagnose_network_issue",
+        _flaky_diagnose,
+    )
+
+    saw_error = False
+
+    async def run():
+        nonlocal saw_error
+        await poller.start()
+        saw_error = False
+        try:
+            for _ in range(300):
+                status = poller.status()
+                if status.last_cycle_outcome == "error":
+                    saw_error = True
+                    assert status.last_error == "RuntimeError"
+                if (
+                    saw_error
+                    and status.last_cycle_outcome == "success"
+                    and len(store) == 1
+                ):
+                    return
+                await asyncio.sleep(0.01)
+            pytest.fail("Poller did not complete a successful cycle after an error")
+        finally:
+            await poller.stop()
+
+    with caplog.at_level("WARNING"):
+        asyncio.run(run())
+
+    status = poller.status()
+    assert saw_error is True
+    assert poller.is_running is False
+    assert status.last_cycle_outcome == "success"
+    assert status.last_error is None
+    assert connector.calls >= 2
+    assert len(store) == 1
+
+    reading = store.get("cisco", "router-01", "GigabitEthernet0/1")
+    assert reading is not None
+    assert reading.error is None
+    assert reading.telemetry["cpu_percent"] == 50.0
+
+    assert "S3cr3t" not in caplog.text
+
+
+def test_poller_status_records_sanitized_unexpected_error(monkeypatch):
+    store = TelemetryStore()
+    poller = TelemetryPoller(
+        store=store,
+        connectors={"cisco": _FakeConnector(telemetry=_make_telemetry())},
+        enabled=True,
+        interval_seconds=0.01,
+    )
+
+    def _boom_diagnose(telemetry):
+        raise RuntimeError("password=S3cr3t")
+
+    monkeypatch.setattr(
+        "app.telemetry_poller.diagnose_network_issue",
+        _boom_diagnose,
+    )
+
+    async def run():
+        await poller.start()
+        try:
+            for _ in range(300):
+                status = poller.status()
+                if status.last_cycle_outcome == "error":
+                    return status
+                await asyncio.sleep(0.01)
+            pytest.fail("Poller never recorded an unexpected cycle error")
+        finally:
+            await poller.stop()
+
+    status = asyncio.run(run())
+    assert status.last_cycle_outcome == "error"
+    assert status.last_error == "RuntimeError"
+    assert "S3cr3t" not in repr(status)
+
+
+def test_poller_status_snapshot_is_immutable():
+    poller = TelemetryPoller(
+        store=TelemetryStore(),
+        connectors={"cisco": _FakeConnector(telemetry=_make_telemetry())},
+        enabled=True,
+    )
+
+    status = poller.status()
+    assert isinstance(status.configured_vendors, tuple)
+    assert isinstance(status.unconfigured_vendors, tuple)
+    with pytest.raises(FrozenInstanceError):
+        status.running = True  # type: ignore[misc]
+
+
+def test_unconfigured_vendors_are_instance_scoped(monkeypatch):
+    """Configuration failures on one poller must not leak into another."""
+
+    def _missing_cisco(vendor, environ=None):
+        if vendor == Vendor.CISCO:
+            raise SandboxConnectorError(
+                "Cisco device host is not configured (set CISCO_SANDBOX_HOST)."
+            )
+        return _FakeConnector(host="https://arista.device")
+
+    monkeypatch.setattr(
+        "app.telemetry_poller.make_connector",
+        _missing_cisco,
+    )
+    monkeypatch.setattr(
+        "app.telemetry_poller.available_vendors",
+        lambda: ["cisco", "arista"],
+    )
+
+    first = TelemetryPoller.from_config(TelemetryStore(), enabled=False)
+
+    def _all_configured(vendor, environ=None):
+        return _FakeConnector(host=f"https://{vendor.value}.device")
+
+    monkeypatch.setattr(
+        "app.telemetry_poller.make_connector",
+        _all_configured,
+    )
+
+    second = TelemetryPoller.from_config(TelemetryStore(), enabled=False)
+
+    assert first.unconfigured_vendors == {"cisco"}
+    assert first.status().unconfigured_vendors == ("cisco",)
+    assert second.unconfigured_vendors == set()
+    assert second.status().unconfigured_vendors == ()
+    assert "cisco" in second.connectors
+
+
+def test_poller_status_after_stop():
+    poller = TelemetryPoller(
+        store=TelemetryStore(),
+        connectors={"cisco": _FakeConnector(telemetry=_make_telemetry())},
+        enabled=True,
+        interval_seconds=60.0,
+    )
+
+    async def run():
+        await poller.start()
+        assert poller.status().running is True
+        await poller.stop()
+
+    asyncio.run(run())
+
+    status = poller.status()
+    assert status.enabled is True
+    assert status.running is False
+    assert status.last_cycle_outcome is None

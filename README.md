@@ -22,7 +22,7 @@ built-in dashboard, and a read-only API for the latest polled telemetry.
 - **Vendor-aware:** a common connector interface keeps device-access logic out
   of the API layer and makes additional vendors straightforward to add.
 - **Safe by default:** background polling is disabled unless explicitly enabled,
-  and `GET /telemetry/latest` only reads local state.
+  and `GET /telemetry/latest` / `GET /telemetry/status` only read local state.
 - **Agent-ready:** the optional `/analyze` path combines Google ADK, Gemini, and
   MCP tools with the deterministic diagnosis output.
 - **Offline-testable:** the default test suite uses fakes and mocks. Live device
@@ -77,6 +77,10 @@ for component-level details.
 - Readings keyed by `(vendor, device_id, interface)`.
 - Latest poll attempt is tracked separately from the last successful
   measurement.
+- Poller-level status is available at `GET /telemetry/status`, including the
+  last cycle start/finish timestamps, outcome, and a sanitized error.
+- Unexpected exceptions in a poll cycle are recorded and do not stop later
+  cycles.
 - A first-poll failure does not fabricate a device identity.
 - In-memory store by design: data resets when the process restarts.
 
@@ -154,6 +158,7 @@ environment variables when those integrations are used.
 | `GET` | `/dashboard` | Built-in dashboard. |
 | `POST` | `/telemetry` | Validate and echo a telemetry payload. |
 | `GET` | `/telemetry/latest` | Read the latest stored polled readings. Never starts a poll. |
+| `GET` | `/telemetry/status` | Read poller configuration and last-cycle status. Never starts a poll. |
 | `POST` | `/diagnose` | Run the deterministic diagnosis engine. |
 | `GET` | `/cisco/telemetry` | Fetch Cisco telemetry and run diagnosis. |
 | `GET` | `/vendors` | List registered vendor connectors. |
@@ -197,6 +202,35 @@ Each non-empty reading includes the vendor/device/interface identity, the latest
 poll outcome, the last successful measurement, failure count, and any sanitized
 error.
 
+### Example: poller status
+
+`GET /telemetry/status` returns the poller's configuration and last completed
+cycle:
+
+```json
+{
+  "enabled": true,
+  "running": true,
+  "interval_seconds": 60.0,
+  "configured_vendors": ["cisco"],
+  "unconfigured_vendors": ["arista", "juniper"],
+  "last_cycle_started_at": "2026-10-29T00:00:00+00:00",
+  "last_cycle_finished_at": "2026-10-29T00:00:01+00:00",
+  "last_cycle_outcome": "degraded",
+  "last_error": "1 vendor poll failed."
+}
+```
+
+`last_cycle_outcome` is `success`, `degraded`, or `error`. A `degraded` cycle
+completed with at least one vendor failure; `error` means an unexpected
+exception interrupted the cycle. `last_error` contains only a credential-safe
+summary: a count-only message for `degraded` cycles, or a sanitized exception
+class for `error` cycles. Detailed per-vendor errors are available through
+`GET /telemetry/latest` only when a verified reading identity exists. A
+first-poll failure without a verified device identity is logged but does not
+create a store reading. The status endpoint returns HTTP `503` only when the
+poller is unavailable and never triggers a poll or device request.
+
 ## Polling lifecycle
 
 Polling is intentionally opt-in:
@@ -209,6 +243,13 @@ uvicorn app.main:app --reload
 When enabled, the FastAPI lifespan creates one application-owned store and
 poller, starts the poller, and stops it cleanly on shutdown. When disabled, the
 poller object exists but no background task is started.
+
+Each cycle records its start and finish timestamps, an outcome (`success`,
+`degraded`, or `error`), and a sanitized `last_error` (count-only for `degraded`
+cycles). Per-vendor failures are isolated and produce a `degraded` cycle, while
+an unexpected exception is contained by the loop, recorded as `error`, and
+followed by another cycle after the normal interval. `GET /telemetry/status`
+exposes this state without polling.
 
 The current implementation supports one configured connector per vendor.
 Multi-device polling and persistent storage are future work; multi-worker
@@ -258,7 +299,8 @@ docs/                   Architecture and implementation notes
 - Device credentials are never returned. Connector errors use credential-safe
   messages, and unexpected exception details are reduced to class names or
   stable, sanitized messages.
-- `GET /telemetry/latest` never triggers a network request.
+- `GET /telemetry/latest` and `GET /telemetry/status` never trigger a network
+  request.
 - Endpoints such as `/cisco/telemetry`, `/vendors/{vendor}/telemetry`, and
   `/integrations` contact configured devices and should be protected before
   exposure to untrusted networks.

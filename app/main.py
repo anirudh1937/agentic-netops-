@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from app.api.agent import AgentAnalysisError, analyze_telemetry
@@ -28,7 +28,7 @@ from app.connectors import (
 from app.diagnosis import DiagnosisResult, diagnose_network_issue
 from app.inventory import Vendor
 from app.telemetry import NetworkTelemetry
-from app.telemetry_poller import TelemetryPoller
+from app.telemetry_poller import PollerStatus, TelemetryPoller
 from app.telemetry_store import TelemetryStore
 
 
@@ -128,6 +128,25 @@ def read_latest_telemetry() -> dict:
         "count": len(readings),
         "generated_at": _now_iso(),
     }
+
+
+@app.get("/telemetry/status", response_model=PollerStatus)
+def read_telemetry_status(request: Request) -> PollerStatus:
+    """Return the telemetry poller's configuration and last-cycle status.
+
+    This is read-only: it reads the application-owned poller from
+    ``request.app.state`` and never starts a poll or contacts a device. The
+    endpoint returns HTTP ``503`` only when no poller is available, which can
+    happen if the application lifespan has not run.
+    """
+
+    poller = getattr(request.app.state, "telemetry_poller", None)
+    if poller is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Telemetry poller is unavailable.",
+        )
+    return poller.status()
 
 
 @app.post("/diagnose", response_model=DiagnosisResult)

@@ -11,6 +11,7 @@ flowchart LR
 
     API --> Diagnosis[Deterministic diagnosis]
     API --> Store[In-memory telemetry store]
+    API --> Freshness[Read-time freshness]
     API --> Agent[Google ADK agent - optional]
 
     Agent --> Gemini[Gemini model]
@@ -41,6 +42,53 @@ This path is local and does not require an external model.
 `GET /telemetry/latest` reads from the application-owned `TelemetryStore` and
 returns the stored readings. It does not call `poll_once()`, start a poller, or
 contact a device.
+
+Each reading is augmented with a nested `freshness` object computed at read
+time. The top-level `readings`, `count`, and `generated_at` contract is
+unchanged, and one current timestamp is used for the entire response so all
+readings are assessed against the same instant.
+
+### Collection freshness
+
+Freshness answers a different question from diagnosis:
+
+- **Metric health** (diagnosis) reports whether reported CPU, memory, packet
+  loss, latency, or interface state is anomalous.
+- **Collection freshness** reports whether the stored measurement was collected
+  recently and successfully.
+
+Freshness is never persisted. It is derived from
+`last_successful_fetched_at`, the server-side timestamp of the last successful
+poll. `timestamp` and `fetched_at` are updated by failed attempts too, so they
+are not valid freshness clocks.
+
+| State | Meaning |
+| --- | --- |
+| `HEALTHY` | Last success is within the threshold and the latest poll succeeded. |
+| `STALE` | Last success is older than the threshold. Takes precedence over a poll failure. |
+| `POLLING_FAILED` | Last success is within the threshold but the latest poll failed. |
+| `UNKNOWN` | No valid success timestamp, an unparseable timestamp, a future timestamp outside tolerance, or a missing outcome. |
+| `UNCONFIGURED` | Vendor-level only: the poller skipped the vendor because its configuration is missing. |
+
+The default threshold is 300 seconds and is read once at application startup
+from `NETOPS_STALE_THRESHOLD_SECONDS`. Invalid, zero, negative, or non-finite
+values fall back to the default. A success timestamp may be up to 60 seconds in
+the future for clock skew; further ahead is `UNKNOWN`, never `HEALTHY`. Missing
+or malformed timestamps produce `age_seconds: null`; the API never substitutes
+the current time.
+
+A first-poll failure without a verified device identity is still not stored as a
+reading. Configured vendors with no reading yet are shown as awaiting their
+first successful poll. `UNCONFIGURED` comes from the poller's existing
+`unconfigured_vendors` status and never invents a device identity.
+
+The dashboard presents collection freshness in its own panel, separate from
+metric anomalies, and labels `STALE` and `POLLING_FAILED` rows as last-known
+data. It displays the backend-provided state and age rather than comparing
+stored timestamps to the browser clock.
+
+A later successful poll automatically restores `HEALTHY`; there is no repair
+or remediation step.
 
 ### Read poller status
 
@@ -104,6 +152,7 @@ sequenceDiagram
 
     API->>Store: get_all()
     Store-->>API: stored readings
+    Note over API: compute freshness from last_successful_fetched_at
 
     Status->>Poller: status()
     Poller-->>Status: immutable snapshot
@@ -141,6 +190,10 @@ The latest attempt is intentionally separate from the last successful
 measurement. A failed poll must not overwrite the last known good telemetry or
 make it appear freshly collected.
 
+Collection freshness is not a stored field. `GET /telemetry/latest` computes it
+from `last_successful_fetched_at` on every read, so the store remains unchanged
+and a successful poll restores a healthy state automatically.
+
 The store is in memory and is reset when the process restarts. Multi-worker
 deployments are not supported by the current in-memory design.
 
@@ -154,4 +207,6 @@ deployments are not supported by the current in-memory design.
   fabricated reading.
 - The latest-telemetry and poller-status read paths never trigger polling or
   network access.
+- Stale or failed collection is surfaced as collection freshness and never
+  silently changes diagnosis severity, evidence, or recommendations.
 - Live integration tests and live-test flags are not part of CI.

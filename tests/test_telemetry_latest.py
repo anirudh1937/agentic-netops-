@@ -8,6 +8,7 @@ explicitly enables it with a mocked connector.
 """
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -26,6 +27,7 @@ def _ensure_polling_disabled(monkeypatch):
     """Keep background polling opt-in for every test in this module."""
 
     monkeypatch.delenv("NETOPS_POLL_ENABLED", raising=False)
+    monkeypatch.delenv("NETOPS_STALE_THRESHOLD_SECONDS", raising=False)
 
 
 def _make_telemetry(*, device_id="router-01", interface="GigabitEthernet0/1"):
@@ -298,6 +300,182 @@ def test_latest_telemetry_no_fabricated_record_on_first_failure():
     body = response.json()
     assert body["readings"] == []
     assert body["count"] == 0
+
+
+# -------------------------------------------------------------------------- #
+# E2. Read-time freshness contract
+# -------------------------------------------------------------------------- #
+
+
+LATEST_TOP_LEVEL_KEYS = {"readings", "count", "generated_at"}
+READING_KEYS = {
+    "vendor",
+    "device_id",
+    "interface",
+    "timestamp",
+    "fetched_at",
+    "source",
+    "telemetry",
+    "diagnosis",
+    "error",
+    "last_successful_timestamp",
+    "last_successful_fetched_at",
+    "last_poll_attempt_at",
+    "last_poll_outcome",
+    "consecutive_failures",
+    "freshness",
+}
+
+
+def _iso_at(seconds_ago: float = 0) -> str:
+    """Return an ISO timestamp relative to the real clock for endpoint tests.
+
+    Endpoint tests exercise the real read-time clock; only the unit tests in
+    ``test_telemetry_freshness.py`` use a fully injected clock.
+    """
+
+    return (
+        datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)
+    ).isoformat(timespec="seconds")
+
+
+def _store_reading(
+    store,
+    *,
+    device_id,
+    interface,
+    success_seconds_ago,
+):
+    store.put(
+        vendor="cisco",
+        device_id=device_id,
+        interface=interface,
+        timestamp=_iso_at(success_seconds_ago),
+        fetched_at=_iso_at(success_seconds_ago),
+        source="cisco",
+        telemetry={"cpu_percent": 50.0},
+        diagnosis={"severity": "normal"},
+    )
+
+
+def test_latest_freshness_object_preserves_contract_and_reading_fields():
+    with TestClient(app) as client:
+        store = client.app.state.telemetry_store
+        _store_reading(
+            store,
+            device_id="router-01",
+            interface="GigabitEthernet0/1",
+            success_seconds_ago=10,
+        )
+
+        response = client.get("/telemetry/latest")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == LATEST_TOP_LEVEL_KEYS
+
+    reading = body["readings"][0]
+    # Existing reading fields are still present; freshness is additive.
+    assert set(reading) == READING_KEYS
+    freshness = reading["freshness"]
+    assert set(freshness) == {"state", "age_seconds", "threshold_seconds"}
+    assert freshness["state"] == "HEALTHY"
+    assert freshness["threshold_seconds"] == 300.0
+    assert 0 <= freshness["age_seconds"] < 300
+
+
+def test_latest_freshness_classifies_stale_failed_and_unknown_readings():
+    with TestClient(app) as client:
+        store = client.app.state.telemetry_store
+
+        # Recent success.
+        _store_reading(
+            store,
+            device_id="healthy-router",
+            interface="GigabitEthernet0/1",
+            success_seconds_ago=10,
+        )
+
+        # Old success, even though the latest attempt may later fail.
+        _store_reading(
+            store,
+            device_id="stale-router",
+            interface="GigabitEthernet0/1",
+            success_seconds_ago=3600,
+        )
+        store.put(
+            vendor="cisco",
+            device_id="stale-router",
+            interface="GigabitEthernet0/1",
+            timestamp=_iso_at(1),
+            fetched_at=_iso_at(1),
+            source="cisco",
+            error="Poll failed.",
+        )
+
+        # Recent success followed by a failure: still within threshold.
+        _store_reading(
+            store,
+            device_id="failed-router",
+            interface="GigabitEthernet0/1",
+            success_seconds_ago=120,
+        )
+        store.put(
+            vendor="cisco",
+            device_id="failed-router",
+            interface="GigabitEthernet0/1",
+            timestamp=_iso_at(1),
+            fetched_at=_iso_at(1),
+            source="cisco",
+            error="Poll failed.",
+        )
+
+        # First poll failure without a verified success timestamp.
+        store.put(
+            vendor="cisco",
+            device_id="unknown-router",
+            interface="GigabitEthernet0/1",
+            timestamp=_iso_at(1),
+            fetched_at=_iso_at(1),
+            source="cisco",
+            error="Poll failed.",
+        )
+
+        response = client.get("/telemetry/latest")
+
+    assert response.status_code == 200
+    readings = {r["device_id"]: r for r in response.json()["readings"]}
+
+    assert readings["healthy-router"]["freshness"]["state"] == "HEALTHY"
+    assert readings["stale-router"]["freshness"]["state"] == "STALE"
+    # Stale takes precedence over the latest failure.
+    assert readings["stale-router"]["last_poll_outcome"] == "failure"
+    assert readings["failed-router"]["freshness"]["state"] == "POLLING_FAILED"
+    assert readings["failed-router"]["freshness"]["age_seconds"] >= 100
+    assert readings["unknown-router"]["freshness"]["state"] == "UNKNOWN"
+    assert readings["unknown-router"]["freshness"]["age_seconds"] is None
+    assert readings["unknown-router"]["last_successful_fetched_at"] == ""
+
+
+def test_latest_uses_configured_stale_threshold(monkeypatch):
+    monkeypatch.setenv("NETOPS_STALE_THRESHOLD_SECONDS", "45")
+
+    with TestClient(app) as client:
+        assert client.app.state.telemetry_stale_threshold_seconds == 45.0
+        store = client.app.state.telemetry_store
+        _store_reading(
+            store,
+            device_id="router-01",
+            interface="GigabitEthernet0/1",
+            success_seconds_ago=60,
+        )
+
+        response = client.get("/telemetry/latest")
+
+    assert response.status_code == 200
+    freshness = response.json()["readings"][0]["freshness"]
+    assert freshness["threshold_seconds"] == 45.0
+    assert freshness["state"] == "STALE"
 
 
 # -------------------------------------------------------------------------- #

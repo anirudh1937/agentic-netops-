@@ -23,6 +23,8 @@ built-in dashboard, and a read-only API for the latest polled telemetry.
   of the API layer and makes additional vendors straightforward to add.
 - **Safe by default:** background polling is disabled unless explicitly enabled,
   and `GET /telemetry/latest` / `GET /telemetry/status` only read local state.
+- **Honest freshness:** stored readings carry a read-time collection-freshness
+  state, so stale or failed collection is never presented as live telemetry.
 - **Agent-ready:** the optional `/analyze` path combines Google ADK, Gemini, and
   MCP tools with the deterministic diagnosis output.
 - **Offline-testable:** the default test suite uses fakes and mocks. Live device
@@ -84,6 +86,25 @@ for component-level details.
 - A first-poll failure does not fabricate a device identity.
 - In-memory store by design: data resets when the process restarts.
 
+### Collection freshness and stale devices
+
+- Collection freshness is derived **at read time** from
+  `last_successful_fetched_at`; it is never persisted and recovers automatically
+  after a successful poll.
+- Each `GET /telemetry/latest` reading includes a nested `freshness` object with
+  `state`, `age_seconds`, and `threshold_seconds`.
+- States are `HEALTHY`, `STALE`, `POLLING_FAILED`, and `UNKNOWN`. `UNCONFIGURED`
+  is vendor-level and comes from the poller's existing
+  `unconfigured_vendors` status, never from a fabricated reading.
+- A stale reading takes precedence over a recent poll failure: the failure
+  fields remain visible, but old data is labelled stale.
+- The default threshold is 300 seconds and can be changed with
+  `NETOPS_STALE_THRESHOLD_SECONDS`.
+- The dashboard shows collection freshness separately from metric anomalies and
+  labels stale or polling-failed rows as last-known data.
+- Freshness does not change diagnosis severity, anomalies, evidence, or
+  recommendations.
+
 ### Optional AI and MCP
 
 - `/analyze` uses the configured Google ADK/Gemini backend to produce a
@@ -141,6 +162,14 @@ Copy `.env.example` to `.env` and fill in only the values you need. Never commit
 | `CISCO_SANDBOX_API_ROOT` | Optional | RESTCONF API root; defaults to `/restconf`. |
 | `CISCO_SANDBOX_VERIFY_TLS` | Optional | Set to `true` to verify the device TLS certificate. |
 | `NETOPS_POLL_ENABLED` | Optional | Set to `true` to start background polling. Default: disabled. |
+| `NETOPS_STALE_THRESHOLD_SECONDS` | Optional | Age in seconds after which a stored reading is `STALE`. Must be a positive, finite number; defaults to `300`. |
+
+The stale threshold defaults to 300 seconds. A valid override must be a positive,
+finite number of seconds. Malformed, zero, negative, or non-finite configured
+values are invalid: the application logs a warning and falls back to 300 seconds.
+Missing or blank values also use the 300-second default. The threshold is read
+once at application startup, so changing `NETOPS_STALE_THRESHOLD_SECONDS`
+requires restarting the application.
 
 The example file also contains `GOOGLE_CLOUD_PROJECT` and
 `CISCO_SANDBOX_INTERFACE`; the current application does not read those values
@@ -188,7 +217,8 @@ recommended action.
 
 ### Example: latest telemetry
 
-`GET /telemetry/latest` returns already-stored readings:
+`GET /telemetry/latest` returns already-stored readings. An empty store keeps
+the original top-level shape:
 
 ```json
 {
@@ -199,8 +229,49 @@ recommended action.
 ```
 
 Each non-empty reading includes the vendor/device/interface identity, the latest
-poll outcome, the last successful measurement, failure count, and any sanitized
-error.
+poll outcome, the last successful measurement, failure count, any sanitized
+error, and a nested read-time `freshness` object:
+
+```json
+{
+  "readings": [
+    {
+      "vendor": "cisco",
+      "device_id": "router-01",
+      "interface": "GigabitEthernet0/1",
+      "last_poll_outcome": "failure",
+      "last_successful_fetched_at": "2026-10-29T00:00:05+00:00",
+      "error": "Device rejected authentication.",
+      "freshness": {
+        "state": "STALE",
+        "age_seconds": 900.0,
+        "threshold_seconds": 300.0
+      }
+    }
+  ],
+  "count": 1,
+  "generated_at": "2026-10-29T00:15:05+00:00"
+}
+```
+
+Freshness precedence is:
+
+1. No valid `last_successful_fetched_at`: `UNKNOWN`.
+2. A success timestamp further in the future than the documented clock-skew
+   tolerance (60 seconds): `UNKNOWN`, never `HEALTHY`.
+3. Age greater than `threshold_seconds`: `STALE`, including when the latest poll
+   also failed.
+4. Latest poll failed but the last success is within the threshold:
+   `POLLING_FAILED`.
+5. Latest poll succeeded and the last success is within the threshold:
+   `HEALTHY`.
+6. Any other/missing outcome: `UNKNOWN`.
+
+`age_seconds` is `null` when the success timestamp is missing or malformed; the
+API never substitutes the current time. A configured vendor with no stored
+reading yet is shown as awaiting its first successful poll rather than as a
+synthetic reading. `UNCONFIGURED` is vendor-level and comes from
+`/telemetry/status`.
 
 ### Example: poller status
 
@@ -255,6 +326,12 @@ The current implementation supports one configured connector per vendor.
 Multi-device polling and persistent storage are future work; multi-worker
 deployments are not supported by the current in-memory store.
 
+Collection freshness is computed only when a consumer reads the store. It uses
+the server-side `last_successful_fetched_at` clock, so a failed attempt cannot
+make preserved telemetry look fresh, and a later successful poll recovers the
+reading automatically. Diagnosis severity remains a metric-health signal and is
+independent of collection freshness.
+
 ## Testing
 
 Run the offline suite:
@@ -284,6 +361,7 @@ app/
   mcp/                  MCP server and network tools
   agents/               Google ADK agent configuration and tools
   diagnosis.py          Deterministic diagnosis rules
+  freshness.py          Read-time collection freshness assessment
   telemetry_poller.py   Controlled background polling
   telemetry_store.py    In-memory telemetry store
   main.py               FastAPI application and lifespan

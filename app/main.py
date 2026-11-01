@@ -26,6 +26,7 @@ from app.connectors import (
     make_connector,
 )
 from app.diagnosis import DiagnosisResult, diagnose_network_issue
+from app.freshness import assess_freshness, read_stale_threshold_seconds
 from app.inventory import Vendor
 from app.telemetry import NetworkTelemetry
 from app.telemetry_poller import PollerStatus, TelemetryPoller
@@ -53,6 +54,9 @@ async def app_lifespan(app: FastAPI):
 
     app.state.telemetry_store = store
     app.state.telemetry_poller = poller
+    # Read once at startup so every request in this process applies the same
+    # operator-configured threshold. Invalid values fall back to the default.
+    app.state.telemetry_stale_threshold_seconds = read_stale_threshold_seconds()
 
     try:
         if poller.enabled:
@@ -103,7 +107,7 @@ def receive_telemetry(telemetry: NetworkTelemetry) -> NetworkTelemetry:
 
 
 @app.get("/telemetry/latest")
-def read_latest_telemetry() -> dict:
+def read_latest_telemetry(request: Request) -> dict:
     """Return the latest stored telemetry readings from the poller.
 
     This is read-only: it only returns data already persisted in the
@@ -116,17 +120,43 @@ def read_latest_telemetry() -> dict:
     sanitized error. This lets consumers distinguish fresh (recently and
     successfully collected) from stale or unavailable data.
 
+    Each reading also carries a nested ``freshness`` object derived at read
+    time from ``last_successful_fetched_at``. Freshness is never persisted, so
+    a successful poll automatically recovers a reading without a repair step.
+    The top-level ``readings``, ``count``, and ``generated_at`` contract is
+    unchanged.
+
     When no readings have been stored, returns an empty ``readings`` list with
     HTTP ``200``.
     """
 
-    store: TelemetryStore = app.state.telemetry_store
-    readings = [reading.model_dump() for reading in store.get_all()]
+    store: TelemetryStore = request.app.state.telemetry_store
+    threshold_seconds = getattr(
+        request.app.state,
+        "telemetry_stale_threshold_seconds",
+        None,
+    )
+    if threshold_seconds is None:
+        threshold_seconds = read_stale_threshold_seconds()
+
+    # One clock read for the whole response so every reading is assessed
+    # against the same instant and ``generated_at`` describes that instant.
+    now = datetime.now(timezone.utc)
+
+    readings = []
+    for reading in store.get_all():
+        payload = reading.model_dump()
+        payload["freshness"] = assess_freshness(
+            reading,
+            now=now,
+            threshold_seconds=threshold_seconds,
+        ).model_dump(mode="json")
+        readings.append(payload)
 
     return {
         "readings": readings,
         "count": len(readings),
-        "generated_at": _now_iso(),
+        "generated_at": now.isoformat(timespec="seconds"),
     }
 
 

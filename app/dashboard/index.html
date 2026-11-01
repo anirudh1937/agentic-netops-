@@ -157,6 +157,7 @@
     .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .grid.cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 
     section.panel {
       background: var(--panel);
@@ -439,6 +440,7 @@
 
     /* ---- Responsive ---- */
     @media (max-width: 1080px) {
+      .grid.cols-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .grid.cols-2 { grid-template-columns: minmax(0, 1fr); }
@@ -449,7 +451,7 @@
       .topbar-actions { width: 100%; }
       .topbar-actions button { flex: 1; }
       main { padding: 18px 16px 32px; }
-      .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
+      .grid.cols-2, .grid.cols-3, .grid.cols-4, .grid.cols-5 { grid-template-columns: 1fr; }
       table.wide { display: block; overflow-x: auto; }
     }
   </style>
@@ -526,6 +528,21 @@
 
     <!-- ===================== TELEMETRY ===================== -->
     <section class="view" id="view-telemetry">
+      <section class="panel" style="margin-bottom:18px;">
+        <div class="section-head">
+          <h2>Collection freshness</h2>
+          <span class="hint" id="freshness-updated">—</span>
+        </div>
+        <div class="content">
+          <div class="actions" style="margin-bottom:14px;">
+            <button class="ghost" id="freshness-refresh" type="button">Refresh collection status</button>
+            <span class="hint">Derived at read time from the last successful poll. Metric anomalies are shown separately.</span>
+          </div>
+          <div class="grid cols-5" id="freshness-kpis"></div>
+          <div id="freshness-detail" style="margin-top:16px;"><div class="state">Loading collection status…</div></div>
+        </div>
+      </section>
+
       <section class="panel">
         <div class="section-head">
           <h2>Live device telemetry</h2>
@@ -672,6 +689,8 @@
       integrations: null,
       telemetry: {},       // keyed by vendor -> parsed /vendors/{v}/telemetry response
       inventory: {},       // keyed by vendor -> inventory response
+      latestTelemetry: null, // GET /telemetry/latest snapshot for collection freshness
+      pollerStatus: null,  // GET /telemetry/status snapshot
       lastUpdated: null,
     };
 
@@ -913,6 +932,161 @@
     }
 
     // ==========================================================
+    //  Collection freshness (stored readings, read-time state)
+    // ==========================================================
+    const FRESHNESS_STYLES = {
+      HEALTHY: { cls: "ok", dot: "ok", label: "Healthy" },
+      STALE: { cls: "high", dot: "bad", label: "Stale" },
+      POLLING_FAILED: { cls: "medium", dot: "warn", label: "Polling failure" },
+      UNKNOWN: { cls: "unknown", dot: "neutral", label: "Unknown" },
+      UNCONFIGURED: { cls: "muted", dot: "neutral", label: "Unconfigured" },
+    };
+
+    function freshnessBadge(freshnessState) {
+      const style = FRESHNESS_STYLES[freshnessState] || FRESHNESS_STYLES.UNKNOWN;
+      return `<span class="badge ${style.cls}">${style.label}</span>`;
+    }
+
+    function formatAge(seconds) {
+      if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds))) {
+        return "—";
+      }
+      const total = Math.max(0, Math.round(Number(seconds)));
+      if (total < 60) return `${total}s`;
+      const minutes = Math.floor(total / 60);
+      if (minutes < 60) return `${minutes}m ${total % 60}s`;
+      const hours = Math.floor(minutes / 60);
+      return `${hours}h ${minutes % 60}m`;
+    }
+
+    async function refreshCollectionFreshness() {
+      const kpis = els("freshness-kpis");
+      const detail = els("freshness-detail");
+      kpis.innerHTML = `<div class="state">Loading…</div>`;
+
+      try {
+        state.latestTelemetry = await getJson("/telemetry/latest");
+      } catch (err) {
+        state.latestTelemetry = null;
+        state.pollerStatus = null;
+        kpis.innerHTML = "";
+        els("freshness-updated").textContent = "—";
+        detail.innerHTML = `<div class="state"><div class="lead">Collection freshness unavailable</div>
+          <span class="hint">${esc(err.message || "The latest-telemetry endpoint could not be read.")}</span></div>`;
+        return;
+      }
+
+      try {
+        state.pollerStatus = await getJson("/telemetry/status");
+      } catch (_) {
+        // The status endpoint can be unavailable without hiding stored readings.
+        state.pollerStatus = null;
+      }
+
+      renderCollectionFreshness();
+    }
+
+    function renderCollectionFreshness() {
+      const latest = state.latestTelemetry || { readings: [], generated_at: null };
+      const readings = Array.isArray(latest.readings) ? latest.readings : [];
+      const status = state.pollerStatus || {};
+      const unconfigured = status.unconfigured_vendors || [];
+      const configured = status.configured_vendors || [];
+      const observedVendors = new Set(readings.map((r) => r.vendor));
+      const awaitingFirstPoll = configured.filter((v) => !observedVendors.has(v));
+
+      const counts = { HEALTHY: 0, STALE: 0, POLLING_FAILED: 0, UNKNOWN: 0 };
+      for (const reading of readings) {
+        const freshnessState = reading.freshness && reading.freshness.state;
+        if (Object.prototype.hasOwnProperty.call(counts, freshnessState)) {
+          counts[freshnessState] += 1;
+        } else {
+          counts.UNKNOWN += 1;
+        }
+      }
+
+      const cards = [
+        { label: "Healthy readings", value: counts.HEALTHY, dot: "ok" },
+        { label: "Stale readings", value: counts.STALE, dot: "bad" },
+        { label: "Polling failures", value: counts.POLLING_FAILED, dot: "warn" },
+        { label: "Unknown readings", value: counts.UNKNOWN, dot: "neutral" },
+        { label: "Unconfigured vendors", value: unconfigured.length, dot: "neutral" },
+      ];
+
+      els("freshness-kpis").innerHTML = cards.map((card) => `
+        <div class="kpi">
+          <span>${card.label}</span>
+          <div class="value"><span class="dot ${card.dot}"></span><strong>${card.value}</strong></div>
+        </div>`).join("");
+
+      els("freshness-updated").textContent = latest.generated_at
+        ? `Assessed ${latest.generated_at}`
+        : "—";
+
+      const attention = readings.filter((reading) => {
+        const freshnessState = (reading.freshness && reading.freshness.state) || "UNKNOWN";
+        return freshnessState !== "HEALTHY";
+      });
+      const threshold = readings.length && readings[0].freshness
+        ? readings[0].freshness.threshold_seconds
+        : null;
+
+      let html = "";
+      if (readings.length) {
+        html += `<div class="hint" style="margin-bottom:10px;">
+          Server-assessed at <b>${esc(latest.generated_at || "—")}</b>
+          with a ${threshold === null ? "—" : esc(String(threshold))}-second stale threshold.
+          Stale and polling-failed rows show last-known data, not a live measurement.
+        </div>`;
+      }
+
+      if (attention.length) {
+        const rows = attention.map((reading) => {
+          const freshnessState = (reading.freshness && reading.freshness.state) || "UNKNOWN";
+          const age = reading.freshness ? reading.freshness.age_seconds : null;
+          const lastSuccess = reading.last_successful_fetched_at || "No successful collection yet";
+          const note = freshnessState === "STALE" || freshnessState === "POLLING_FAILED"
+            ? "Last-known data"
+            : "Awaiting a successful poll";
+          return `<tr>
+            <td><b>${esc(reading.device_id || reading.vendor)}</b><div class="hint">${esc(reading.vendor)} · ${esc(reading.interface || "n/a")}</div></td>
+            <td>${freshnessBadge(freshnessState)}</td>
+            <td>${esc(lastSuccess)}</td>
+            <td>${esc(formatAge(age))}</td>
+            <td>${esc(note)}</td>
+          </tr>`;
+        }).join("");
+
+        html += `<table class="wide">
+          <thead><tr>
+            <th>Reading</th><th>Collection state</th><th>Last successful collection</th><th>Age</th><th>Data status</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+      } else if (readings.length) {
+        html += `<div class="state"><div class="lead">All collected readings are healthy</div>
+          <span class="hint">Collection freshness is healthy; metric anomalies remain a separate signal.</span></div>`;
+      }
+
+      if (awaitingFirstPoll.length) {
+        html += `<div class="state" style="margin-top:12px;"><div class="lead">Awaiting first successful poll</div>
+          <span class="hint">Configured vendors without a stored reading: ${esc(awaitingFirstPoll.join(", "))}</span></div>`;
+      }
+
+      if (unconfigured.length) {
+        html += `<div class="state" style="margin-top:12px;"><div class="lead">Unconfigured vendors</div>
+          <span class="hint">${esc(unconfigured.join(", "))} are skipped because their configuration is missing. No device identity is invented.</span></div>`;
+      }
+
+      if (!readings.length && !awaitingFirstPoll.length && !unconfigured.length) {
+        html = `<div class="state"><div class="lead">No polled readings yet</div>
+          <span class="hint">Collection freshness appears after the first successful poll.</span></div>`;
+      }
+
+      els("freshness-detail").innerHTML = html;
+    }
+
+    // ==========================================================
     //  Vendor telemetry fetch + cache
     // ==========================================================
     async function loadVendorTelemetry(vendor, force = false) {
@@ -958,7 +1132,7 @@
           interface: body.interface || "n/a",
           severity: body.severity || "normal",
           anomalies,
-          time: body.timestamp || now,
+          time: body.timestamp || "—",
         });
       }
 
@@ -1086,25 +1260,8 @@
       setBusy(btn, false);
     }
 
-    // Derive a staleness label from the real collection timestamp only.
-    // A missing or unparseable timestamp yields no label so we never invent
-    // freshness. The browser clock is used solely as "now" to compare against
-    // the authoritative `timestamp` supplied by the backend.
-    function freshnessLabel(timestamp) {
-      if (!timestamp) return null;
-      var collected = Date.parse(timestamp);
-      if (Number.isNaN(collected)) return null;
-      var ageMs = Date.now() - collected;
-      if (ageMs < 0) return null; // clock skew: treat as fresh
-      var STALE_MS = 5 * 60 * 1000; // 5 minutes
-      return ageMs > STALE_MS ? "stale" : "fresh";
-    }
-
-    function freshnessBadge(timestamp) {
-      return freshnessLabel(timestamp) === "stale"
-        ? `<span class="badge unknown">stale</span>`
-        : "";
-    }
+    // Stored-reading freshness comes from the backend's read-time assessment.
+    // Do not infer it from the browser clock or a missing timestamp here.
 
     function renderTelemetryBody(vendor, body) {
       const wrap = els("telemetry-body");
@@ -1123,7 +1280,6 @@
           <span><b>Source:</b> ${sourceLabel}</span>
           <span><b>Interface:</b> ${esc(tel.interface || "n/a")}</span>
           <span><b>Updated:</b> ${esc(tel.timestamp || "—")}</span>
-          ${freshnessBadge(tel.timestamp)}
         </div>`;
 
       const gauges = els("tel-gauges");
@@ -1187,7 +1343,7 @@
       const sev = body.severity || "normal";
       const anomalies = body.anomalies || [];
       const evidence = body.evidence || [];
-      const time = body.timestamp || new Date().toLocaleString();
+      const time = body.timestamp || "—";
 
       const evidenceList = evidence.length
         ? `<ol>${evidence.map((e) => `<li>${esc(e)}</li>`).join("")}</ol>`
@@ -1201,7 +1357,6 @@
           </div>
           ${setStatusBadge(sev)}
           <span class="time">${esc(time)}</span>
-          ${freshnessBadge(time)}
         </div>
         <div class="alerts-list">
           <h3>Anomalies</h3>${anomalies.length ? `<ul>${anomalies.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>` : `<li class="hint">None</li>`}
@@ -1310,6 +1465,7 @@
       await refreshHealth();
       await loadIntegrations();
       populateVendorSelects();
+      await refreshCollectionFreshness();
       // Always populate the overview's active-anomalies view on load; the
       // "Refresh" action additionally force-re-reads any cached telemetry.
       await refreshOverview();
@@ -1336,6 +1492,7 @@
       });
 
       // Telemetry
+      els("freshness-refresh").addEventListener("click", refreshCollectionFreshness);
       els("tel-vendor").addEventListener("change", (e) => populateInterfaceOptions(e.target.value));
       els("telemetry-fetch-form").addEventListener("submit", (e) => {
         e.preventDefault();

@@ -281,6 +281,42 @@
     .kpi .value strong { font-size: 20px; overflow-wrap: anywhere; }
     .kpi .value .dot { box-shadow: 0 0 0 3px #fbfcfd; }
 
+    /* ---- Poller status ---- */
+    .poller-status {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .poller-status .status-item {
+      min-width: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+
+    .poller-status .status-item.wide { grid-column: 1 / -1; }
+
+    .poller-status .status-label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+    }
+
+    .poller-status .status-value {
+      margin-top: 5px;
+      font-size: 13px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .poller-status .status-value.muted { color: var(--muted); font-weight: 600; }
+    .poller-status .status-value.error { color: var(--high); }
+
     /* ---- Vendor connectivity cards ---- */
     .vendor-card {
       padding: 16px;
@@ -444,6 +480,7 @@
       .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .grid.cols-2 { grid-template-columns: minmax(0, 1fr); }
+      .poller-status { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
     @media (max-width: 720px) {
@@ -452,6 +489,7 @@
       .topbar-actions button { flex: 1; }
       main { padding: 18px 16px 32px; }
       .grid.cols-2, .grid.cols-3, .grid.cols-4, .grid.cols-5 { grid-template-columns: 1fr; }
+      .poller-status { grid-template-columns: 1fr; }
       table.wide { display: block; overflow-x: auto; }
     }
   </style>
@@ -538,6 +576,7 @@
             <button class="ghost" id="freshness-refresh" type="button">Refresh collection status</button>
             <span class="hint">Derived at read time from the last successful poll. Metric anomalies are shown separately.</span>
           </div>
+          <div id="freshness-poller-status" style="margin-bottom:16px;"></div>
           <div class="grid cols-5" id="freshness-kpis"></div>
           <div id="freshness-detail" style="margin-top:16px;"><div class="state">Loading collection status…</div></div>
         </div>
@@ -690,7 +729,9 @@
       telemetry: {},       // keyed by vendor -> parsed /vendors/{v}/telemetry response
       inventory: {},       // keyed by vendor -> inventory response
       latestTelemetry: null, // GET /telemetry/latest snapshot for collection freshness
+      latestTelemetryError: null,
       pollerStatus: null,  // GET /telemetry/status snapshot
+      pollerStatusError: null,
       lastUpdated: null,
     };
 
@@ -959,41 +1000,167 @@
       return `${hours}h ${minutes % 60}m`;
     }
 
-    async function refreshCollectionFreshness() {
-      const kpis = els("freshness-kpis");
-      const detail = els("freshness-detail");
-      kpis.innerHTML = `<div class="state">Loading…</div>`;
+    function formatStatusTime(value) {
+      if (!value) return "—";
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return String(value);
+      return parsed.toLocaleString();
+    }
 
-      try {
-        state.latestTelemetry = await getJson("/telemetry/latest");
-      } catch (err) {
-        state.latestTelemetry = null;
-        state.pollerStatus = null;
-        kpis.innerHTML = "";
-        els("freshness-updated").textContent = "—";
-        detail.innerHTML = `<div class="state"><div class="lead">Collection freshness unavailable</div>
-          <span class="hint">${esc(err.message || "The latest-telemetry endpoint could not be read.")}</span></div>`;
+    function pollerOutcomeBadge(outcome) {
+      if (!outcome) return `<span class="badge neutral">No cycle yet</span>`;
+      const style = outcome === "success"
+        ? "ok"
+        : outcome === "degraded"
+          ? "medium"
+          : outcome === "error"
+            ? "high"
+            : "neutral";
+      return `<span class="badge ${style}">${esc(outcome)}</span>`;
+    }
+
+    function renderPollerStatus() {
+      const el = els("freshness-poller-status");
+      if (!el) return;
+
+      if (state.pollerStatusError) {
+        const detail = state.pollerStatusError.message || "The poller status endpoint could not be read.";
+        el.innerHTML = `<div class="poller-status">
+          <div class="status-item"><span class="status-label">Poller status</span><div class="status-value error">Unavailable</div></div>
+          <div class="status-item wide"><span class="status-label">Poller status unavailable</span>
+            <div class="status-value muted">${esc(detail)}</div></div>
+        </div>`;
         return;
       }
 
-      try {
-        state.pollerStatus = await getJson("/telemetry/status");
-      } catch (_) {
-        // The status endpoint can be unavailable without hiding stored readings.
-        state.pollerStatus = null;
+      const status = state.pollerStatus;
+      if (!status) {
+        el.innerHTML = `<div class="poller-status">
+          <div class="status-item wide"><span class="status-label">Poller status</span>
+            <div class="status-value muted">Not available</div></div>
+        </div>`;
+        return;
       }
 
+      const has = (key) => Object.prototype.hasOwnProperty.call(status, key);
+      const enabled = has("enabled") ? (status.enabled ? "Yes" : "No") : "—";
+      const running = has("running") ? (status.running ? "Yes" : "No") : "—";
+      const interval = Number.isFinite(Number(status.interval_seconds))
+        ? `${Number(status.interval_seconds)}s`
+        : "—";
+      const outcome = status.last_cycle_outcome || null;
+      const lastError = status.last_error === null || status.last_error === undefined
+        ? (has("last_error") ? "None" : "—")
+        : String(status.last_error);
+
+      el.innerHTML = `<div class="poller-status">
+        <div class="status-item"><span class="status-label">Polling enabled</span><div class="status-value">${esc(enabled)}</div></div>
+        <div class="status-item"><span class="status-label">Running</span><div class="status-value">${esc(running)}</div></div>
+        <div class="status-item"><span class="status-label">Interval</span><div class="status-value">${esc(interval)}</div></div>
+        <div class="status-item"><span class="status-label">Last cycle outcome</span><div class="status-value">${pollerOutcomeBadge(outcome)}</div></div>
+        <div class="status-item"><span class="status-label">Last cycle started</span><div class="status-value">${esc(formatStatusTime(status.last_cycle_started_at))}</div></div>
+        <div class="status-item"><span class="status-label">Last cycle finished</span><div class="status-value">${esc(formatStatusTime(status.last_cycle_finished_at))}</div></div>
+        <div class="status-item wide"><span class="status-label">Last error</span>
+          <div class="status-value ${lastError === "None" || lastError === "—" ? "muted" : "error"}">${esc(lastError)}</div></div>
+      </div>`;
+    }
+
+    function renderFirstPollState(unobserved, status) {
+      if (!unobserved.length) return "";
+      const names = esc(unobserved.join(", "));
+
+      if (!status) {
+        return `<div class="state" style="margin-top:12px;"><div class="lead">Awaiting first successful poll</div>
+          <span class="hint">Poller status is unavailable, so polling history cannot be determined. Configured vendors without a stored reading: ${names}.</span></div>`;
+      }
+
+      if (status.enabled === false) {
+        return `<div class="state" style="margin-top:12px;"><div class="lead">Polling disabled</div>
+          <span class="hint">Polling is disabled. Configured vendors without a stored reading: ${names}.</span></div>`;
+      }
+
+      const outcome = status.last_cycle_outcome;
+      if (outcome === "degraded" || outcome === "error") {
+        const rawError = status.last_error ? String(status.last_error) : "";
+        const errorText = rawError
+          ? ` Last poller error: ${esc(rawError)}${/[.!?]$/.test(rawError) ? "" : "."}`
+          : "";
+        const finishedText = status.last_cycle_finished_at
+          ? ` Last cycle finished ${esc(formatStatusTime(status.last_cycle_finished_at))}.`
+          : "";
+        return `<div class="state" style="margin-top:12px;"><div class="lead">First poll failed</div>
+          <span class="hint">No successful reading yet for: ${names}.${errorText}${finishedText} The next successful poll will store a reading.</span></div>`;
+      }
+
+      if (outcome === "success") {
+        return `<div class="state" style="margin-top:12px;"><div class="lead">Awaiting first successful poll</div>
+          <span class="hint">The poller completed a cycle, but no stored reading is available for: ${names}.</span></div>`;
+      }
+
+      if (status.last_cycle_started_at && !status.last_cycle_finished_at) {
+        return `<div class="state" style="margin-top:12px;"><div class="lead">First poll in progress</div>
+          <span class="hint">A poll cycle started at ${esc(formatStatusTime(status.last_cycle_started_at))}; no stored reading is available yet for: ${names}.</span></div>`;
+      }
+
+      return `<div class="state" style="margin-top:12px;"><div class="lead">Awaiting first poll</div>
+        <span class="hint">The poller has not completed a cycle yet. Configured vendors without a stored reading: ${names}.</span></div>`;
+    }
+
+    async function refreshCollectionFreshness() {
+      const kpis = els("freshness-kpis");
+      const pollerStatus = els("freshness-poller-status");
+      kpis.innerHTML = `<div class="state">Loading…</div>`;
+      if (pollerStatus) {
+        pollerStatus.innerHTML = `<div class="poller-status">
+          <div class="status-item wide"><span class="status-label">Poller status</span>
+            <div class="status-value muted">Loading…</div></div>
+        </div>`;
+      }
+
+      const [latestResult, statusResult] = await Promise.allSettled([
+        getJson("/telemetry/latest"),
+        getJson("/telemetry/status"),
+      ]);
+
+      if (latestResult.status === "fulfilled") {
+        state.latestTelemetry = latestResult.value;
+        state.latestTelemetryError = null;
+      } else {
+        state.latestTelemetry = null;
+        state.latestTelemetryError = latestResult.reason;
+      }
+
+      if (statusResult.status === "fulfilled") {
+        state.pollerStatus = statusResult.value;
+        state.pollerStatusError = null;
+      } else {
+        state.pollerStatus = null;
+        state.pollerStatusError = statusResult.reason;
+      }
+
+      renderPollerStatus();
       renderCollectionFreshness();
     }
 
     function renderCollectionFreshness() {
-      const latest = state.latestTelemetry || { readings: [], generated_at: null };
+      const latest = state.latestTelemetry;
+      if (!latest) {
+        els("freshness-kpis").innerHTML = "";
+        els("freshness-updated").textContent = "—";
+        const detail = state.latestTelemetryError
+          ? state.latestTelemetryError.message || "The latest-telemetry endpoint could not be read."
+          : "The latest-telemetry endpoint did not return a payload.";
+        els("freshness-detail").innerHTML = `<div class="state"><div class="lead">Collection freshness unavailable</div>
+          <span class="hint">${esc(detail)}</span></div>`;
+        return;
+      }
+
       const readings = Array.isArray(latest.readings) ? latest.readings : [];
       const status = state.pollerStatus || {};
       const unconfigured = status.unconfigured_vendors || [];
       const configured = status.configured_vendors || [];
       const observedVendors = new Set(readings.map((r) => r.vendor));
-      const awaitingFirstPoll = configured.filter((v) => !observedVendors.has(v));
+      const unobservedVendors = configured.filter((v) => !observedVendors.has(v));
 
       const counts = { HEALTHY: 0, STALE: 0, POLLING_FAILED: 0, UNKNOWN: 0 };
       for (const reading of readings) {
@@ -1046,20 +1213,26 @@
           const age = reading.freshness ? reading.freshness.age_seconds : null;
           const lastSuccess = reading.last_successful_fetched_at || "No successful collection yet";
           const note = freshnessState === "STALE" || freshnessState === "POLLING_FAILED"
-            ? "Last-known data"
+            ? "Last-known data (not live)"
             : "Awaiting a successful poll";
+          const failureDetails = freshnessState === "POLLING_FAILED"
+            ? `<div><b>Error:</b> ${esc(reading.error || "Unknown error")}</div>
+               <div><b>Consecutive failures:</b> ${esc(reading.consecutive_failures ?? "—")}</div>
+               <div><b>Last attempt:</b> ${esc(formatStatusTime(reading.last_poll_attempt_at))}</div>`
+            : `<span class="hint">—</span>`;
           return `<tr>
             <td><b>${esc(reading.device_id || reading.vendor)}</b><div class="hint">${esc(reading.vendor)} · ${esc(reading.interface || "n/a")}</div></td>
             <td>${freshnessBadge(freshnessState)}</td>
             <td>${esc(lastSuccess)}</td>
             <td>${esc(formatAge(age))}</td>
             <td>${esc(note)}</td>
+            <td>${failureDetails}</td>
           </tr>`;
         }).join("");
 
         html += `<table class="wide">
           <thead><tr>
-            <th>Reading</th><th>Collection state</th><th>Last successful collection</th><th>Age</th><th>Data status</th>
+            <th>Reading</th><th>Collection state</th><th>Last successful collection</th><th>Age</th><th>Data status</th><th>Failure details</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
@@ -1068,9 +1241,8 @@
           <span class="hint">Collection freshness is healthy; metric anomalies remain a separate signal.</span></div>`;
       }
 
-      if (awaitingFirstPoll.length) {
-        html += `<div class="state" style="margin-top:12px;"><div class="lead">Awaiting first successful poll</div>
-          <span class="hint">Configured vendors without a stored reading: ${esc(awaitingFirstPoll.join(", "))}</span></div>`;
+      if (unobservedVendors.length) {
+        html += renderFirstPollState(unobservedVendors, state.pollerStatus);
       }
 
       if (unconfigured.length) {
@@ -1078,7 +1250,7 @@
           <span class="hint">${esc(unconfigured.join(", "))} are skipped because their configuration is missing. No device identity is invented.</span></div>`;
       }
 
-      if (!readings.length && !awaitingFirstPoll.length && !unconfigured.length) {
+      if (!readings.length && !unobservedVendors.length && !unconfigured.length) {
         html = `<div class="state"><div class="lead">No polled readings yet</div>
           <span class="hint">Collection freshness appears after the first successful poll.</span></div>`;
       }
@@ -1106,18 +1278,18 @@
       }
     }
 
-    async function loadAllVendorTelemetry() {
+    async function loadAllVendorTelemetry(force = false) {
       const configured = state.vendors.filter((v) => v.configured).map((v) => v.vendor);
-      await Promise.all(configured.map((v) => loadVendorTelemetry(v)));
+      await Promise.all(configured.map((v) => loadVendorTelemetry(v, force)));
     }
 
     // ==========================================================
     //  VIEW: Overview (active anomalies)
     // ==========================================================
-    async function refreshOverview() {
+    async function refreshOverview(force = false) {
       const box = els("alerts-overview");
       box.innerHTML = `<div class="state">Loading…</div>`;
-      await loadAllVendorTelemetry();
+      await loadAllVendorTelemetry(force);
       const now = new Date().toLocaleString();
       els("overview-updated").textContent = `Updated ${now}`;
 
@@ -1247,7 +1419,7 @@
     // ==========================================================
     //  VIEW: Telemetry (live gauges)
     // ==========================================================
-    async function fetchLiveTelemetry(interfaceOpt) {
+    async function fetchLiveTelemetry(interfaceOpt, force = false) {
       const vendor = els("tel-vendor").value;
       if (!vendor) {
         showToast("telemetry-notice", "Select a vendor first.", "error");
@@ -1255,7 +1427,7 @@
       }
       const btn = els("tel-fetch-btn");
       setBusy(btn, true, "Fetching…");
-      const body = await loadVendorTelemetry(vendor);
+      const body = await loadVendorTelemetry(vendor, force);
       renderTelemetryBody(vendor, body);
       setBusy(btn, false);
     }
@@ -1322,7 +1494,7 @@
     async function refreshAlerts() {
       const box = els("alerts-list");
       box.innerHTML = `<div class="state">Loading…</div>`;
-      await loadAllVendorTelemetry();
+      await loadAllVendorTelemetry(true);
 
       const rows = [];
       for (const v of state.vendors) {
@@ -1463,15 +1635,19 @@
       clearNotice("telemetry-notice");
       clearNotice("ai-notice");
       await refreshHealth();
-      await loadIntegrations();
+      try {
+        await loadIntegrations();
+      } catch (err) {
+        // Integration inventory is useful but must not hide collection
+        // freshness or the rest of the dashboard when /integrations fails.
+        console.error("Integration status unavailable", err);
+        showToast("telemetry-notice", "Integration status unavailable; collection freshness was still refreshed.", "error");
+      }
       populateVendorSelects();
       await refreshCollectionFreshness();
-      // Always populate the overview's active-anomalies view on load; the
-      // "Refresh" action additionally force-re-reads any cached telemetry.
-      await refreshOverview();
-      if (force === true) {
-        await loadVendorTelemetry(state.vendors[0] && state.vendors[0].vendor, true);
-      }
+      // The overview is the live path; a forced refresh re-reads every
+      // configured vendor rather than relying on cached telemetry.
+      await refreshOverview(force === true);
       state.lastUpdated = new Date().toLocaleTimeString();
       els("overview-updated").textContent = `Updated ${state.lastUpdated}`;
     }
@@ -1496,11 +1672,11 @@
       els("tel-vendor").addEventListener("change", (e) => populateInterfaceOptions(e.target.value));
       els("telemetry-fetch-form").addEventListener("submit", (e) => {
         e.preventDefault();
-        fetchLiveTelemetry(els("tel-interface").value);
+        fetchLiveTelemetry(els("tel-interface").value, true);
       });
       els("tel-refresh").addEventListener("click", () => {
         const v = els("tel-vendor").value;
-        if (v) { loadInventory(v, true).then(() => fetchLiveTelemetry(els("tel-interface").value)); }
+        if (v) { loadInventory(v, true).then(() => fetchLiveTelemetry(els("tel-interface").value, true)); }
       });
 
       // Alerts

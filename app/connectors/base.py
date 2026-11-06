@@ -63,5 +63,16 @@ class SandboxConnector(ABC):
     def fetch_telemetry(self, interface: str | None = None) -> NetworkTelemetry:
         """Return the current device/interface telemetry as ``NetworkTelemetry``."""
 
+    def close(self) -> None:
+        """Release owned resources.
+
+        The default implementation does nothing. Connectors that own an HTTP
+        client (or other closeable resource) should override this to release it
+        deterministically. Subclasses must not close resources they did not
+        create, and ``close()`` must be safe to call multiple times.
+        """
+
+        return None
+
     def __repr__(self) -> str:  # pragma: no cover - cosmetic only
         return f"<{type(self).__name__} vendor={self.vendor!r}>"

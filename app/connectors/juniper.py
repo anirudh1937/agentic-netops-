@@ -75,6 +75,24 @@ class JuniperConnector(SandboxConnector):
     ) -> None:
         self._device = device or JuniperDevice.from_env()
         self._client = client or JuniperClient(self._device)
+        #: True when this connector created (and therefore owns) its client.
+        #: Injected clients remain caller-owned and are never closed by this
+        #: connector.
+        self._owns_client = client is None
+        self._closed = False
+
+    def close(self) -> None:
+        """Close the HTTP client this connector owns, if any.
+
+        Injected clients are never closed. Calling ``close()`` multiple times
+        is safe.
+        """
+
+        if self._closed:
+            return
+        self._closed = True
+        if self._owns_client:
+            self._client.close()
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> "JuniperConnector":

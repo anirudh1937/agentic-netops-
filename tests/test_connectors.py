@@ -437,3 +437,87 @@ def test_unknown_vendor_route_returns_404():
 
     assert response.status_code == 404
     assert "Unsupported vendor" in response.json()["detail"]
+
+
+# -------------------------------------------------------------------------- #
+# Step 5: HTTP client ownership and deterministic closure
+# -------------------------------------------------------------------------- #
+
+
+def test_connector_closes_owned_client():
+    """Owned clients are closed by connector.close()."""
+
+    from app.connectors.arista import AristaClient, AristaConnector, AristaDevice
+    from app.connectors.juniper import (
+        JuniperClient,
+        JuniperConnector,
+        JuniperDevice,
+    )
+
+    for connector_cls, client_cls, device_cls in (
+        (JuniperConnector, JuniperClient, JuniperDevice),
+        (AristaConnector, AristaClient, AristaDevice),
+    ):
+        device = device_cls(
+            host="https://sandbox.local",
+            username="devnet",
+            password="S3cr3t",
+            api_root="/restconf",
+        )
+        connector = connector_cls(device=device)
+        assert connector._owns_client is True
+        connector.close()
+        assert connector._closed is True
+
+
+def test_connector_does_not_close_injected_client():
+    """Injected clients remain open when connector.close() is called."""
+
+    import httpx
+
+    from app.connectors.arista import AristaClient, AristaConnector, AristaDevice
+    from app.connectors.juniper import (
+        JuniperClient,
+        JuniperConnector,
+        JuniperDevice,
+    )
+
+    for connector_cls, client_cls, device_cls in (
+        (JuniperConnector, JuniperClient, JuniperDevice),
+        (AristaConnector, AristaClient, AristaDevice),
+    ):
+        device = device_cls(
+            host="https://sandbox.local",
+            username="devnet",
+            password="S3cr3t",
+            api_root="/restconf",
+        )
+        http_client = httpx.Client(base_url="https://sandbox.local")
+        client = client_cls(device=device, client=http_client)
+        connector = connector_cls(device=device, client=client)
+        assert connector._owns_client is False
+
+        connector.close()
+        assert http_client.is_closed is False
+        http_client.close()
+
+
+def test_connector_close_is_idempotent():
+    """Connector close() is safe to call repeatedly."""
+
+    from app.connectors.arista import AristaConnector, AristaDevice
+    from app.connectors.juniper import JuniperConnector, JuniperDevice
+
+    for connector_cls, device_cls in (
+        (JuniperConnector, JuniperDevice),
+        (AristaConnector, AristaDevice),
+    ):
+        device = device_cls(
+            host="https://sandbox.local",
+            username="devnet",
+            password="S3cr3t",
+            api_root="/restconf",
+        )
+        connector = connector_cls(device=device)
+        connector.close()
+        connector.close()  # must not raise

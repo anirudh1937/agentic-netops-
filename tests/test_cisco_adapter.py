@@ -620,3 +620,168 @@ def test_cisco_telemetry_route_sparse_reports_unknown(monkeypatch):
     assert "Insufficient telemetry" in body["diagnosis"]
     assert body["anomalies"] == []
     assert body["recommendation"]
+
+
+# -------------------------------------------------------------------------- #
+# Step 5: HTTP client ownership and deterministic closure
+# -------------------------------------------------------------------------- #
+
+
+def test_cisco_client_closes_owned_http_client():
+    """A CiscoClient that created its own httpx.Client closes it on close()."""
+
+    import httpx
+
+    from app.cisco import CiscoClient, CiscoDevice
+
+    device = CiscoDevice(
+        host="https://sandbox.local",
+        username="devnet",
+        password="S3cr3t",
+    )
+    client = CiscoClient(device)  # no injected client -> owns its httpx.Client
+    assert client._owns_client is True
+
+    http_client = client._http_client()
+    client.close()
+    assert http_client.is_closed is True
+
+
+def test_cisco_client_close_is_idempotent():
+    """Calling close() twice on an owned client closes once and does not raise."""
+
+    import httpx
+
+    from app.cisco import CiscoClient, CiscoDevice
+
+    device = CiscoDevice(
+        host="https://sandbox.local",
+        username="devnet",
+        password="S3cr3t",
+    )
+    client = CiscoClient(device)
+    http_client = client._http_client()
+
+    client.close()
+    assert http_client.is_closed is True
+
+    client.close()  # second call must be safe
+    assert http_client.is_closed is True
+
+
+def test_cisco_client_does_not_close_injected_http_client():
+    """An injected httpx.Client remains open after client.close()."""
+
+    import httpx
+
+    from app.cisco import CiscoClient, CiscoDevice
+
+    device = CiscoDevice(
+        host="https://sandbox.local",
+        username="devnet",
+        password="S3cr3t",
+    )
+    http_client = httpx.Client(base_url="https://sandbox.local")
+    client = CiscoClient(device, client=http_client)
+    assert client._owns_client is False
+
+    client.close()
+    assert http_client.is_closed is False
+    http_client.close()
+
+
+def test_cisco_connector_closes_owned_client():
+    """A CiscoConnector that created its own CiscoClient closes it."""
+
+    from app.cisco import CiscoConnector, CiscoDevice
+
+    device = CiscoDevice(
+        host="https://sandbox.local",
+        username="devnet",
+        password="S3cr3t",
+    )
+    connector = CiscoConnector(device=device)
+    assert connector._owns_client is True
+
+    connector.close()
+    assert connector._client._closed is True
+
+
+def test_cisco_connector_does_not_close_injected_client():
+    """An injected CiscoClient remains open when the connector closes."""
+
+    import httpx
+
+    from app.cisco import CiscoClient, CiscoConnector, CiscoDevice
+
+    device = CiscoDevice(
+        host="https://sandbox.local",
+        username="devnet",
+        password="S3cr3t",
+    )
+    http_client = httpx.Client(base_url="https://sandbox.local")
+    client = CiscoClient(device, client=http_client)
+    connector = CiscoConnector(device=device, client=client)
+    assert connector._owns_client is False
+
+    connector.close()
+    assert http_client.is_closed is False
+    http_client.close()
+
+
+def test_cisco_connector_close_is_idempotent():
+    """Connector close() is safe to call repeatedly."""
+
+    from app.cisco import CiscoConnector, CiscoDevice
+
+    device = CiscoDevice(
+        host="https://sandbox.local",
+        username="devnet",
+        password="S3cr3t",
+    )
+    connector = CiscoConnector(device=device)
+    connector.close()
+    connector.close()  # must not raise
+
+
+def test_cisco_connector_reuses_single_http_client():
+    """Multiple get_json calls reuse the same owned httpx.Client."""
+
+    import httpx
+
+    from app.cisco import CiscoClient, CiscoDevice
+
+    device = CiscoDevice(
+        host="https://sandbox.local",
+        username="devnet",
+        password="S3cr3t",
+    )
+    client = CiscoClient(device)
+
+    first = client._http_client()
+    second = client._http_client()
+    assert first is second
+    client.close()
+
+
+def test_cisco_client_close_does_not_leak_credentials(caplog):
+    """close() must not log credentials or raw exception text."""
+
+    import httpx
+
+    from app.cisco import CiscoClient, CiscoDevice
+
+    device = CiscoDevice(
+        host="https://sandbox.local",
+        username="devnet",
+        password="S3cr3t-do-not-leak",
+    )
+    # Owned client that raises on close; error must be contained and not
+    # logged with credentials.
+    client = CiscoClient(device)
+    client.close()
+    client.close()
+
+    for record in caplog.records:
+        assert "S3cr3t" not in record.getMessage()
+        assert "password" not in record.getMessage().lower()

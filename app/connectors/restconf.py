@@ -94,16 +94,43 @@ class RestconfClient:
     def __init__(self, device: RestconfDevice, client: httpx.Client | None = None) -> None:
         self._device = device
         self._client = client
+        #: True when this client created (and therefore owns) the underlying
+        #: ``httpx.Client``. Injected clients remain caller-owned and are never
+        #: closed by this instance.
+        self._owns_client = client is None
+        self._closed = False
+        self._cached_client: httpx.Client | None = None
 
     def _http_client(self) -> httpx.Client:
         if self._client is not None:
             return self._client
-        return httpx.Client(
-            base_url=self._device.host,
-            auth=(self._device.username, self._device.password),
-            timeout=self._device.timeout,
-            verify=self._device.verify_tls,
-        )
+        if self._cached_client is None:
+            self._cached_client = httpx.Client(
+                base_url=self._device.host,
+                auth=(self._device.username, self._device.password),
+                timeout=self._device.timeout,
+                verify=self._device.verify_tls,
+            )
+        return self._cached_client
+
+    def close(self) -> None:
+        """Close the HTTP client this instance owns, if any.
+
+        Injected clients are never closed. Calling ``close()`` multiple times
+        is safe.
+        """
+
+        if self._closed:
+            return
+        self._closed = True
+        client = self._client or self._cached_client
+        if self._owns_client and client is not None:
+            try:
+                client.close()
+            except Exception:  # pragma: no cover - shutdown best effort
+                # Closing a client at teardown must not raise; socket errors
+                # here are not actionable and must not leak credentials.
+                pass
 
     def get_json(self, path: str):
         url = f"{self._device.api_root}/{path.lstrip('/')}"

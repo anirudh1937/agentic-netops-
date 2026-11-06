@@ -93,16 +93,43 @@ class CiscoClient:
     def __init__(self, device: CiscoDevice, client: httpx.Client | None = None) -> None:
         self._device = device
         self._client = client
+        #: True when this client created (and therefore owns) the underlying
+        #: ``httpx.Client``. Injected clients remain caller-owned and are never
+        #: closed by this instance.
+        self._owns_client = client is None
+        self._closed = False
+        self._cached_client: httpx.Client | None = None
 
     def _http_client(self) -> httpx.Client:
         if self._client is not None:
             return self._client
-        return httpx.Client(
-            base_url=f"https://{self._device.host}",
-            auth=(self._device.username, self._device.password),
-            timeout=self._device.timeout,
-            verify=self._device.verify_tls,
-        )
+        if self._cached_client is None:
+            self._cached_client = httpx.Client(
+                base_url=f"https://{self._device.host}",
+                auth=(self._device.username, self._device.password),
+                timeout=self._device.timeout,
+                verify=self._device.verify_tls,
+            )
+        return self._cached_client
+
+    def close(self) -> None:
+        """Close the HTTP client this instance owns, if any.
+
+        Injected clients are never closed. Calling ``close()`` multiple times
+        is safe.
+        """
+
+        if self._closed:
+            return
+        self._closed = True
+        client = self._client or self._cached_client
+        if self._owns_client and client is not None:
+            try:
+                client.close()
+            except Exception:  # pragma: no cover - shutdown best effort
+                # Closing a client at teardown must not raise; socket errors
+                # here are not actionable and must not leak credentials.
+                pass
 
     def get_json(self, path: str):
         """GET a RESTCONF path and parse it as JSON.
@@ -324,23 +351,28 @@ def fetch_telemetry(
             "Set CISCO_SANDBOX_USERNAME and CISCO_SANDBOX_PASSWORD."
         )
     client = client or CiscoClient(device)
+    owned = client is not None and getattr(client, "_owns_client", False)
 
-    cpu_percent = _get_cpu(client)
-    memory_percent = _get_memory(client)
-    name, status = _get_interface(client, interface)
-    hostname = _get_hostname(client)
+    try:
+        cpu_percent = _get_cpu(client)
+        memory_percent = _get_memory(client)
+        name, status = _get_interface(client, interface)
+        hostname = _get_hostname(client)
 
-    telemetry = NetworkTelemetry(
-        device_id=hostname or device.host,
-        interface=name or interface or device.host,
-        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        cpu_percent=cpu_percent,
-        memory_percent=memory_percent,
-        bandwidth_mbps=None,
-        packet_loss_percent=None,
-        latency_ms=None,
-        interface_status=status or "up",
-    )
+        telemetry = NetworkTelemetry(
+            device_id=hostname or device.host,
+            interface=name or interface or device.host,
+            timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            cpu_percent=cpu_percent,
+            memory_percent=memory_percent,
+            bandwidth_mbps=None,
+            packet_loss_percent=None,
+            latency_ms=None,
+            interface_status=status or "up",
+        )
+    finally:
+        if owned:
+            client.close()
 
     return telemetry
 
@@ -362,6 +394,24 @@ class CiscoConnector(SandboxConnector):
     ) -> None:
         self._device = device or CiscoDevice.from_env()
         self._client = client or CiscoClient(self._device)
+        #: True when this connector created (and therefore owns) its client.
+        #: Injected clients remain caller-owned and are never closed by this
+        #: connector.
+        self._owns_client = client is None
+        self._closed = False
+
+    def close(self) -> None:
+        """Close the HTTP client this connector owns, if any.
+
+        Injected clients are never closed. Calling ``close()`` multiple times
+        is safe.
+        """
+
+        if self._closed:
+            return
+        self._closed = True
+        if self._owns_client:
+            self._client.close()
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> "CiscoConnector":

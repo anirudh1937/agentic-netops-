@@ -47,6 +47,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.agents.agent import diagnose_network, mcp_toolset  # noqa: E402
+from app.main import app  # noqa: E402
 
 
 APP_NAME = "agentic_netops_lifecycle"
@@ -528,3 +529,23 @@ def test_recovery_after_subprocess_exit():
         return captured
 
     captured = asyncio.run(_scenario())
+
+
+def test_app_shutdown_closes_mcp_toolset():
+    """Application shutdown terminates the shared MCP subprocess.
+
+    Exercises the real FastAPI lifespan (startup + shutdown) via
+    app.router.lifespan_context. Starts the shared MCP toolset's subprocess
+    through an offline MCP invocation (get_tools), then exits the lifespan
+    context, which runs app_lifespan shutdown and calls mcp_toolset.close().
+    Verifies the subprocess terminates.
+    """
+
+    async def _scenario():
+        async with _capture_stdio_process() as captured:
+            async with app.router.lifespan_context(app):
+                await mcp_toolset.get_tools(None)
+        return captured
+
+    captured = asyncio.run(_scenario())
+    _assert_process_terminated(captured)

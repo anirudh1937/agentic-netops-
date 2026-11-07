@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from app.api.agent import (
     AgentTimeoutError,
     analyze_telemetry,
 )
+from app.agents.agent import mcp_toolset
 from app.api.schemas import (
     AnalyzeResponse,
     HealthResponse,
@@ -35,6 +37,8 @@ from app.inventory import Vendor
 from app.telemetry import NetworkTelemetry
 from app.telemetry_poller import PollerStatus, TelemetryPoller
 from app.telemetry_store import TelemetryStore
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -67,8 +71,28 @@ async def app_lifespan(app: FastAPI):
             await poller.start()
         yield
     finally:
+        # Shutdown cleanup operations are independent: failure of one must not
+        # prevent the other. Capture the poller shutdown error so it can be
+        # re-raised after MCP cleanup is attempted.
+        poller_stop_error = None
         if poller.is_running:
-            await poller.stop()
+            try:
+                await poller.stop()
+            except Exception as exc:  # noqa: BLE001 - log and continue shutdown
+                poller_stop_error = exc
+                logger.warning("Telemetry poller shutdown failed", exc_info=True)
+
+        # Close the shared MCP toolset so its stdio subprocess is terminated
+        # when the application shuts down.
+        try:
+            await mcp_toolset.close()
+        except Exception as exc:  # noqa: BLE001 - log and continue shutdown
+            logger.warning("MCP toolset shutdown failed", exc_info=True)
+
+        # Re-raise the original poller shutdown error so it is not hidden by
+        # MCP cleanup.
+        if poller_stop_error is not None:
+            raise poller_stop_error
 
 
 def _polling_enabled() -> bool:

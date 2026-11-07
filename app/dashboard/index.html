@@ -516,6 +516,7 @@
       <button class="nav-item" data-tab="telemetry">Telemetry</button>
       <button class="nav-item" data-tab="alerts">Alerts &amp; Diagnosis</button>
       <button class="nav-item" data-tab="ai">AI Troubleshooting</button>
+      <button class="nav-item" data-tab="demo">Demo Diagnosis</button>
       <button class="nav-item" data-tab="integrations">Integrations</button>
     </nav>
   </header>
@@ -706,9 +707,63 @@
       </div>
     </section>
 
+    <!-- ===================== DEMONSTRATION ===================== -->
+    <section class="view" id="view-demo">
+      <section class="panel">
+        <div class="section-head">
+          <h2>Offline Agent Diagnosis Demo</h2>
+          <span class="hint">Simulated telemetry &rarr; deterministic rule engine diagnosis. No live network device or Gemini API call.</span>
+        </div>
+        <div class="content">
+          <div class="grid cols-2">
+            <section class="panel">
+              <div class="section-head"><h3>Scenario</h3></div>
+              <div class="content">
+                <div class="field">
+                  <label for="demo-scenario">Scenario</label>
+                  <select id="demo-scenario">
+                    <option value="a">A. Healthy network (normal)</option>
+                    <option value="b">B. High CPU (degraded)</option>
+                    <option value="c">C. Packet loss + latency (degraded)</option>
+                    <option value="d">D. Interface down (degraded)</option>
+                  </select>
+                </div>
+                <div class="actions" style="margin-top:12px;">
+                  <button class="primary" id="demo-run-btn" type="button">Run Diagnosis</button>
+                </div>
+                <div id="demo-notice" class="notice" style="margin-top:10px;"></div>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="section-head"><h3>Deterministic Diagnosis</h3></div>
+              <div class="content" id="demo-diagnosis">
+                <div class="state">Run a scenario to see the rule-engine result.</div>
+              </div>
+            </section>
+          </div>
+          <div class="grid cols-2" style="margin-top:18px;">
+            <section class="panel">
+              <div class="section-head"><h3>AI Agent Analysis — Live Gemini</h3></div>
+              <div class="content" id="demo-ai">
+                <div class="state">Checking Gemini availability&hellip;</div>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="section-head"><h3>MCP Transparency</h3></div>
+              <div class="content">
+                <div class="evidence-block">
+                  <p>The ADK agent has access to the MCP <code>check_device_health</code> tool and real offline stdio execution is covered by project tests.</p>
+                  <p class="hint">This demo page does <em>not</em> invoke MCP directly. It calls <code>/diagnose</code> (deterministic rule engine) only.</p>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </section>
+
     <!-- ===================== INTEGRATIONS ===================== -->
     <section class="view" id="view-integrations">
-      <div class="grid cols-3" style="margin-bottom:18px;" id="integr-status"></div>
       <section class="panel">
         <div class="section-head">
           <h2>Vendor integration status</h2>
@@ -1652,6 +1707,143 @@
       els("overview-updated").textContent = `Updated ${state.lastUpdated}`;
     }
 
+    // ==========================================================
+    //  Demo Diagnosis (offline, no live device or Gemini required)
+    // ==========================================================
+    const DEMO_SCENARIOS = {
+      a: {
+        label: "A. Healthy network",
+        telemetry: {
+          device_id: "router-01",
+          interface: "GigabitEthernet0/1",
+          timestamp: new Date().toISOString(),
+          cpu_percent: 35,
+          memory_percent: 45,
+          bandwidth_mbps: 900,
+          packet_loss_percent: 0,
+          latency_ms: 20,
+          interface_status: "up",
+        },
+      },
+      b: {
+        label: "B. High CPU",
+        telemetry: {
+          device_id: "router-01",
+          interface: "GigabitEthernet0/1",
+          timestamp: new Date().toISOString(),
+          cpu_percent: 92,
+          memory_percent: 55,
+          bandwidth_mbps: 900,
+          packet_loss_percent: 0,
+          latency_ms: 35,
+          interface_status: "up",
+        },
+      },
+      c: {
+        label: "C. Packet loss + latency",
+        telemetry: {
+          device_id: "router-01",
+          interface: "GigabitEthernet0/1",
+          timestamp: new Date().toISOString(),
+          cpu_percent: 60,
+          memory_percent: 50,
+          bandwidth_mbps: 900,
+          packet_loss_percent: 5,
+          latency_ms: 180,
+          interface_status: "up",
+        },
+      },
+      d: {
+        label: "D. Interface down",
+        telemetry: {
+          device_id: "router-01",
+          interface: "GigabitEthernet0/1",
+          timestamp: new Date().toISOString(),
+          cpu_percent: 40,
+          memory_percent: 45,
+          bandwidth_mbps: 900,
+          packet_loss_percent: 0,
+          latency_ms: 20,
+          interface_status: "down",
+        },
+      },
+    };
+
+    async function runDemoDiagnosis() {
+      const sel = els("demo-scenario");
+      const scenario = DEMO_SCENARIOS[sel.value];
+      if (!scenario) return;
+
+      const box = els("demo-diagnosis");
+      box.innerHTML = `<div class="state">Running diagnosis&hellip;</div>`;
+
+      try {
+        const result = await postJson("/diagnose", scenario.telemetry);
+        renderDemoDiagnosis(result);
+        showToast("demo-notice", "Deterministic diagnosis complete.", "success");
+      } catch (err) {
+        box.innerHTML = `<div class="state"><div class="lead">Diagnosis failed</div>
+          <span class="hint">${esc(err.message || "Unknown error")}</span></div>`;
+        showToast("demo-notice", "Diagnosis failed: " + err.message, "error");
+      }
+    }
+
+    function renderDemoDiagnosis(result) {
+      const wrap = els("demo-diagnosis");
+      const sev = result.severity || "normal";
+      wrap.innerHTML = `
+        <div class="alert-row ${sev}">
+          <div class="alert-head">
+            <div>
+              <span class="device">${esc(result.device_id)} · ${esc(result.interface)}</span>
+              <div class="iface">${esc(result.diagnosis)}</div>
+            </div>
+            ${setStatusBadge(sev)}
+            <span class="time">${esc(result.timestamp || "&mdash;")}</span>
+          </div>
+          <div class="alerts-list">
+            <h3>Anomalies</h3>
+            ${(result.anomalies || []).length
+              ? `<ol>${result.anomalies.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>`
+              : `<li class="hint">None</li>`}
+            <h3>Evidence</h3>
+            <div class="evidence-block">
+              ${(result.evidence || []).map((e) => `<p>${esc(e)}</p>`).join("") || `<p class="hint">None</p>`}
+            </div>
+            <div class="evidence-block">
+              <h4>Recommended action</h4>
+              <p style="margin:0;">${esc(result.recommendation || "No recommendation.")}</p>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    async function runDemoAgent() {
+      const sel = els("demo-scenario");
+      const scenario = DEMO_SCENARIOS[sel.value];
+      if (!scenario) return;
+
+      const integ = state.integrations || {};
+      if (!integ.agent || !integ.agent.configured) {
+        els("demo-ai").innerHTML = `<div class="state"><div class="lead">Live agent unavailable</div>
+          <span class="hint">Gemini agent is not configured (GEMINI_API_KEY missing). Deterministic diagnosis above still applies.</span></div>`;
+        return;
+      }
+
+      const wrap = els("demo-ai");
+      wrap.innerHTML = `<div class="state">Asking agent&hellip;</div>`;
+
+      try {
+        const result = await postJson("/analyze", scenario.telemetry);
+        wrap.innerHTML = `<div class="grid cols-2"><div class="evidence-block"><div class="section-head"><h3>Agent Analysis</h3></div><div class="content"><div class="analysis">${esc(result.analysis)}</div></div></div></div>`;
+        showToast("demo-notice", "Agent analysis complete.", "success");
+      } catch (err) {
+        wrap.innerHTML = `<div class="state"><div class="lead">Agent analysis failed</div>
+          <span class="hint">${esc(err.message || "Unknown error")}</span></div>`;
+        showToast("demo-notice", "Agent analysis failed: " + err.message, "error");
+      }
+    }
+
     function init() {
       // Navigation
       $$(".nav-item").forEach((btn) => {
@@ -1678,6 +1870,9 @@
         const v = els("tel-vendor").value;
         if (v) { loadInventory(v, true).then(() => fetchLiveTelemetry(els("tel-interface").value, true)); }
       });
+
+      // Demo diagnosis
+      els("demo-run-btn").addEventListener("click", runDemoDiagnosis);
 
       // Alerts
       els("alerts-fetch-btn").addEventListener("click", refreshAlerts);

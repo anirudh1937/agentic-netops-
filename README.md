@@ -163,6 +163,7 @@ Copy `.env.example` to `.env` and fill in only the values you need. Never commit
 | `CISCO_SANDBOX_VERIFY_TLS` | Optional | Set to `true` to verify the device TLS certificate. |
 | `NETOPS_POLL_ENABLED` | Optional | Set to `true` to start background polling. Default: disabled. |
 | `NETOPS_STALE_THRESHOLD_SECONDS` | Optional | Age in seconds after which a stored reading is `STALE`. Must be a positive, finite number; defaults to `300`. |
+| `NETOPS_AGENT_TIMEOUT_SECONDS` | Optional | Maximum time for one `/analyze` agent request. Must be a positive, finite number; defaults to `60`. |
 
 The stale threshold defaults to 300 seconds. A valid override must be a positive,
 finite number of seconds. Malformed, zero, negative, or non-finite configured
@@ -170,6 +171,12 @@ values are invalid: the application logs a warning and falls back to 300 seconds
 Missing or blank values also use the 300-second default. The threshold is read
 once at application startup, so changing `NETOPS_STALE_THRESHOLD_SECONDS`
 requires restarting the application.
+
+The agent timeout defaults to 60 seconds and applies to each `/analyze` request.
+A valid override must be a positive, finite number of seconds. Malformed, zero,
+negative, or non-finite values log a warning and fall back to 60 seconds. Missing
+or blank values also use the 60-second default. The value is read for each
+request, so a restart is not required after changing it.
 
 The example file also contains `GOOGLE_CLOUD_PROJECT` and
 `CISCO_SANDBOX_INTERFACE`; the current application does not read those values
@@ -349,6 +356,32 @@ python -m pytest -q
 The default suite does not contact Cisco, Juniper, Arista, Gemini, or any other
 external service. Live integration tests are opt-in and are skipped unless the
 corresponding environment flags are set. CI runs only the offline suite.
+
+### Opt-in live integration tests
+
+Live tests are skipped by default and require credentials. Set the flags in your
+shell rather than in `.env` so an ordinary test run cannot enable live calls
+accidentally.
+
+Gemini:
+
+```powershell
+$env:AGENTIC_NETOPS_LIVE_TEST = "1"
+$env:GEMINI_API_KEY = "<your-key>"
+.\.venv\Scripts\python.exe -m pytest -q tests/test_agent_api.py::test_analyze_telemetry_real_model_integration
+```
+
+`AGENTIC_NETOPS_LIVE_TEST` is the canonical flag. The legacy
+`AGNETNETOPS_LIVE_TEST=1` name is still honored.
+
+Cisco (read-only):
+
+```powershell
+$env:AGENTIC_NETOPS_LIVE_CISCO_TEST = "1"
+# Set CISCO_SANDBOX_HOST, CISCO_SANDBOX_USERNAME, and
+# CISCO_SANDBOX_PASSWORD in .env or the environment.
+.\.venv\Scripts\python.exe -m pytest -q tests/test_cisco_live_integration.py::test_cisco_live_integration
+```
 
 ## Project structure
 

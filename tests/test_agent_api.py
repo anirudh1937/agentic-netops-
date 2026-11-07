@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import sys
 from pathlib import Path
@@ -12,12 +13,100 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from fastapi.testclient import TestClient
 import pytest
 
-from app.api.agent import AgentAnalysisError, analyze_telemetry
+from app.api.agent import (
+    AGENT_TIMEOUT_ENV_VAR,
+    AgentAnalysisError,
+    AgentTimeoutError,
+    analyze_telemetry,
+    read_agent_timeout_seconds,
+)
 from app.main import app
 from app.telemetry import NetworkTelemetry
 
 
 client = TestClient(app)
+
+CANONICAL_LIVE_TEST_ENV = "AGENTIC_NETOPS_LIVE_TEST"
+LEGACY_LIVE_TEST_ENV = "AGNETNETOPS_LIVE_TEST"
+
+
+def _live_gemini_test_enabled(environ=None):
+    """Return whether the opt-in Gemini live test was requested.
+
+    The canonical flag is ``AGENTIC_NETOPS_LIVE_TEST``. The historical
+    misspelled ``AGNETNETOPS_LIVE_TEST`` remains accepted so existing operator
+    scripts do not silently stop running the live test.
+    """
+
+    source = os.environ if environ is None else environ
+    return (
+        source.get(CANONICAL_LIVE_TEST_ENV) == "1"
+        or source.get(LEGACY_LIVE_TEST_ENV) == "1"
+    )
+
+
+@pytest.fixture(autouse=True)
+def _clear_agent_timeout_env(monkeypatch):
+    """Keep tests deterministic unless a test explicitly sets the timeout."""
+
+    monkeypatch.delenv(AGENT_TIMEOUT_ENV_VAR, raising=False)
+
+
+@pytest.mark.parametrize(
+    "environ,expected",
+    [
+        ({}, 60.0),
+        ({AGENT_TIMEOUT_ENV_VAR: ""}, 60.0),
+        ({AGENT_TIMEOUT_ENV_VAR: "   "}, 60.0),
+        ({AGENT_TIMEOUT_ENV_VAR: "15"}, 15.0),
+        ({AGENT_TIMEOUT_ENV_VAR: "0.5"}, 0.5),
+        ({AGENT_TIMEOUT_ENV_VAR: "abc"}, 60.0),
+        ({AGENT_TIMEOUT_ENV_VAR: "0"}, 60.0),
+        ({AGENT_TIMEOUT_ENV_VAR: "-1"}, 60.0),
+        ({AGENT_TIMEOUT_ENV_VAR: "nan"}, 60.0),
+        ({AGENT_TIMEOUT_ENV_VAR: "inf"}, 60.0),
+    ],
+    ids=[
+        "missing",
+        "blank",
+        "whitespace",
+        "valid-integer",
+        "valid-fraction",
+        "malformed",
+        "zero",
+        "negative",
+        "nan",
+        "infinity",
+    ],
+)
+def test_read_agent_timeout_seconds_values(environ, expected):
+    assert read_agent_timeout_seconds(environ) == expected
+
+
+def test_read_agent_timeout_seconds_defaults_without_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="app.api.agent"):
+        assert read_agent_timeout_seconds({}) == 60.0
+        assert read_agent_timeout_seconds({AGENT_TIMEOUT_ENV_VAR: ""}) == 60.0
+        assert (
+            read_agent_timeout_seconds({AGENT_TIMEOUT_ENV_VAR: "   "}) == 60.0
+        )
+
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize("value", ["abc", "0", "-1", "nan", "inf"])
+def test_read_agent_timeout_seconds_warns_for_invalid_values(caplog, value):
+    with caplog.at_level(logging.WARNING, logger="app.api.agent"):
+        result = read_agent_timeout_seconds({AGENT_TIMEOUT_ENV_VAR: value})
+
+    assert result == 60.0
+    assert AGENT_TIMEOUT_ENV_VAR in caplog.text
+    assert "using the default of 60 seconds" in caplog.text
+
+    # The configured value is never echoed into the warning.
+    record = caplog.records[-1]
+    assert record.args == (AGENT_TIMEOUT_ENV_VAR, 60.0)
+    assert value not in record.args
 
 
 TELEMETRY_PAYLOAD = {
@@ -200,6 +289,43 @@ def test_analyze_telemetry_propagates_runner_error():
             )
 
 
+def test_analyze_telemetry_times_out_and_cancels_runner(monkeypatch):
+    """A blocked runner is cancelled and converted into AgentTimeoutError."""
+
+    monkeypatch.setenv(AGENT_TIMEOUT_ENV_VAR, "0.05")
+    started = False
+    cancelled = False
+
+    async def slow_events():
+        nonlocal started, cancelled
+        started = True
+        try:
+            await asyncio.sleep(10)
+            yield _FinalEvent("too late")
+        finally:
+            cancelled = True
+
+    session_service = Mock()
+    session_service.create_session = AsyncMock(
+        return_value=SimpleNamespace(id="session-01")
+    )
+    runner = Mock()
+    runner.run_async.return_value = slow_events()
+
+    with patch(
+        "app.api.agent.InMemorySessionService",
+        return_value=session_service,
+    ), patch("app.api.agent.Runner", return_value=runner):
+        with pytest.raises(AgentTimeoutError) as excinfo:
+            asyncio.run(
+                analyze_telemetry(NetworkTelemetry(**TELEMETRY_PAYLOAD))
+            )
+
+    assert isinstance(excinfo.value, AgentAnalysisError)
+    assert started is True
+    assert cancelled is True
+
+
 def test_analyze_endpoint_associates_analysis_with_telemetry():
     device = "switch-07"
     with patch(
@@ -272,6 +398,23 @@ def test_analyze_endpoint_returns_503_for_agent_analysis_error():
     mock_analyze.assert_awaited_once()
 
 
+def test_analyze_endpoint_returns_504_when_agent_times_out():
+    """A bounded agent timeout maps to a distinct FastAPI 504 response."""
+    with patch(
+        "app.main.analyze_telemetry",
+        new_callable=AsyncMock,
+    ) as mock_analyze:
+        mock_analyze.side_effect = AgentTimeoutError(
+            "Agent analysis exceeded 0.1 seconds."
+        )
+
+        response = client.post("/analyze", json=TELEMETRY_PAYLOAD)
+
+    assert response.status_code == 504
+    assert response.json() == {"detail": "Agent analysis timed out."}
+    mock_analyze.assert_awaited_once()
+
+
 def test_analyze_endpoint_returns_503_when_agent_configuration_missing():
     """Missing model configuration surfaces as a clean 503, not a crash."""
     with patch(
@@ -336,20 +479,50 @@ def test_analyze_endpoint_runs_offline_without_model_credentials(monkeypatch):
     mock_runner.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "environ,expected",
+    [
+        ({}, False),
+        ({CANONICAL_LIVE_TEST_ENV: "0"}, False),
+        ({CANONICAL_LIVE_TEST_ENV: "true"}, False),
+        ({CANONICAL_LIVE_TEST_ENV: "1"}, True),
+        ({LEGACY_LIVE_TEST_ENV: "1"}, True),
+        ({CANONICAL_LIVE_TEST_ENV: "1", LEGACY_LIVE_TEST_ENV: "1"}, True),
+        ({CANONICAL_LIVE_TEST_ENV: "0", LEGACY_LIVE_TEST_ENV: "1"}, True),
+        ({CANONICAL_LIVE_TEST_ENV: "1", LEGACY_LIVE_TEST_ENV: "0"}, True),
+    ],
+    ids=[
+        "unset",
+        "canonical-zero",
+        "canonical-true",
+        "canonical-one",
+        "legacy-one",
+        "both-one",
+        "canonical-zero-legacy-one",
+        "canonical-one-legacy-zero",
+    ],
+)
+def test_live_gemini_test_enabled(environ, expected):
+    assert _live_gemini_test_enabled(environ) is expected
+
+
 def test_analyze_telemetry_real_model_integration():
     """End-to-end analysis with the real model backend.
 
     Gated behind an explicit opt-in so this never performs a live LLM call
-    during a normal run. Set both ``AGNETNETOPS_LIVE_TEST=1`` and
-    ``GEMINI_API_KEY`` to enable it; otherwise it skips cleanly and the
-    real model path is only exercised by the mocked unit tests above.
+    during a normal run. Set both ``AGENTIC_NETOPS_LIVE_TEST=1`` and
+    ``GEMINI_API_KEY`` to enable it; the legacy
+    ``AGNETNETOPS_LIVE_TEST=1`` name is also honored. Otherwise it skips
+    cleanly and the real model path is only exercised by the mocked unit tests
+    above.
     """
     if (
-        os.environ.get("AGNETNETOPS_LIVE_TEST") != "1"
+        not _live_gemini_test_enabled()
         or not os.environ.get("GEMINI_API_KEY")
     ):
         pytest.skip(
-            "Opt-in only: set AGNETNETOPS_LIVE_TEST=1 and GEMINI_API_KEY to "
+            "Opt-in only: set AGENTIC_NETOPS_LIVE_TEST=1 (legacy "
+            "AGNETNETOPS_LIVE_TEST=1 is also honored) and GEMINI_API_KEY to "
             "perform a real model call."
         )
 

@@ -225,6 +225,117 @@ def test_analyze_endpoint_associates_analysis_with_telemetry():
     mock_analyze.assert_awaited_once()
 
 
+def test_analyze_endpoint_forwards_telemetry_to_agent_layer():
+    """The validated request body reaches the agent layer unchanged."""
+    analysis_text = "CPU saturation detected; review workload."
+
+    with patch(
+        "app.main.analyze_telemetry",
+        new_callable=AsyncMock,
+    ) as mock_analyze:
+        mock_analyze.return_value = analysis_text
+        response = client.post("/analyze", json=TELEMETRY_PAYLOAD)
+
+    assert response.status_code == 200
+    mock_analyze.assert_awaited_once()
+
+    forwarded = mock_analyze.await_args.args[0]
+    assert isinstance(forwarded, NetworkTelemetry)
+    assert forwarded.model_dump() == TELEMETRY_PAYLOAD
+
+    # The response contract exposes exactly the four documented fields and
+    # echoes the submitted device/interface with the agent's analysis verbatim.
+    assert response.json() == {
+        "device_id": TELEMETRY_PAYLOAD["device_id"],
+        "interface": TELEMETRY_PAYLOAD["interface"],
+        "status": "completed",
+        "analysis": analysis_text,
+    }
+
+
+def test_analyze_endpoint_returns_503_for_agent_analysis_error():
+    """An empty/unusable agent result maps to the dedicated 503 branch."""
+    with patch(
+        "app.main.analyze_telemetry",
+        new_callable=AsyncMock,
+    ) as mock_analyze:
+        mock_analyze.side_effect = AgentAnalysisError(
+            "Agent returned an empty analysis."
+        )
+
+        response = client.post("/analyze", json=TELEMETRY_PAYLOAD)
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Agent analysis is currently unavailable."
+    }
+    mock_analyze.assert_awaited_once()
+
+
+def test_analyze_endpoint_returns_503_when_agent_configuration_missing():
+    """Missing model configuration surfaces as a clean 503, not a crash."""
+    with patch(
+        "app.main.analyze_telemetry",
+        new_callable=AsyncMock,
+    ) as mock_analyze:
+        mock_analyze.side_effect = RuntimeError(
+            "No model credentials configured. Set GEMINI_API_KEY."
+        )
+
+        response = client.post("/analyze", json=TELEMETRY_PAYLOAD)
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Agent analysis failed."}
+    mock_analyze.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {k: v for k, v in TELEMETRY_PAYLOAD.items() if k != "device_id"},
+        {k: v for k, v in TELEMETRY_PAYLOAD.items() if k != "interface"},
+        {**TELEMETRY_PAYLOAD, "cpu_percent": 150},
+        {**TELEMETRY_PAYLOAD, "interface_status": "flapping"},
+    ],
+    ids=[
+        "missing-device-id",
+        "missing-interface",
+        "cpu-out-of-range",
+        "invalid-interface-status",
+    ],
+)
+def test_analyze_endpoint_rejects_invalid_telemetry(payload):
+    """Invalid payloads are rejected before reaching the agent layer."""
+    with patch(
+        "app.main.analyze_telemetry",
+        new_callable=AsyncMock,
+    ) as mock_analyze:
+        response = client.post("/analyze", json=payload)
+
+    assert response.status_code == 422
+    mock_analyze.assert_not_awaited()
+
+
+def test_analyze_endpoint_runs_offline_without_model_credentials(monkeypatch):
+    """The endpoint contract can be exercised with no credentials or model."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    with patch(
+        "app.main.analyze_telemetry",
+        new_callable=AsyncMock,
+    ) as mock_analyze, patch(
+        "app.api.agent.Runner",
+    ) as mock_runner:
+        mock_analyze.return_value = "Offline analysis."
+        response = client.post("/analyze", json=TELEMETRY_PAYLOAD)
+
+    assert response.status_code == 200
+    assert response.json()["analysis"] == "Offline analysis."
+    # The real ADK runner must never be constructed by contract tests.
+    mock_runner.assert_not_called()
+
+
 def test_analyze_telemetry_real_model_integration():
     """End-to-end analysis with the real model backend.
 

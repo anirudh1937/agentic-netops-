@@ -1,3 +1,5 @@
+from typing import Optional
+
 from mcp.server.fastmcp import FastMCP
 
 from app.mcp.network_tools import get_device_health
@@ -12,11 +14,11 @@ def check_device_health(
     device_id: str,
     interface: str,
     timestamp: str,
-    cpu_percent: float,
-    memory_percent: float,
-    bandwidth_mbps: float,
-    packet_loss_percent: float,
-    latency_ms: float,
+    cpu_percent: Optional[float],
+    memory_percent: Optional[float],
+    bandwidth_mbps: Optional[float],
+    packet_loss_percent: Optional[float],
+    latency_ms: Optional[float],
     interface_status: str,
 ) -> dict:
     """Analyze network telemetry and return device health and detected anomalies."""

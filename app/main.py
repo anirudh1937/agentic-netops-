@@ -8,7 +8,11 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from app.api.agent import AgentAnalysisError, analyze_telemetry
+from app.api.agent import (
+    AgentAnalysisError,
+    AgentTimeoutError,
+    analyze_telemetry,
+)
 from app.api.schemas import (
     AnalyzeResponse,
     HealthResponse,
@@ -403,6 +407,11 @@ def vendored_inventory(vendor: str) -> dict:
 async def analyze_network(telemetry: NetworkTelemetry) -> AnalyzeResponse:
     try:
         result = await analyze_telemetry(telemetry)
+    except AgentTimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Agent analysis timed out.",
+        ) from exc
     except AgentAnalysisError as exc:
         raise HTTPException(
             status_code=503,

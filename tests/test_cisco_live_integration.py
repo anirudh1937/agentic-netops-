@@ -66,7 +66,7 @@ def test_cisco_live_integration():
     # unless the operator intentionally enables the test.
     if os.environ.get("AGENTIC_NETOPS_LIVE_CISCO_TEST") != "1":
         pytest.skip(
-            "Opt-in only: set AGNETNETOPS_LIVE_CISCO_TEST=1 to run the Cisco "
+            "Opt-in only: set AGENTIC_NETOPS_LIVE_CISCO_TEST=1 to run the Cisco "
             "sandbox smoke test."
         )
 

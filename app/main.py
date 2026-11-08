@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -7,12 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.api.agent import (
     AgentAnalysisError,
     AgentTimeoutError,
     analyze_telemetry,
+    analyze_telemetry_offline,
 )
 from app.agents.agent import mcp_toolset
 from app.api.schemas import (
@@ -453,3 +455,43 @@ async def analyze_network(telemetry: NetworkTelemetry) -> AnalyzeResponse:
         "status": "completed",
         "analysis": result,
     }
+
+
+@app.post("/analyze/demo")
+async def analyze_telemetry_demo(telemetry: NetworkTelemetry) -> dict:
+    """Run the ADK agent with a deterministic fake model and real MCP tool.
+
+    Demonstrates the full ADK->MCP execution path without live Gemini or
+    external services. Returns a structured result including the tool call,
+    tool result, and final agent response.
+    """
+
+    try:
+        return await analyze_telemetry_offline(telemetry)
+    except AgentTimeoutError as exc:
+        return JSONResponse(
+            status_code=504,
+            content={
+                "detail": "Agent analysis timed out.",
+                "execution_status": "timeout",
+            },
+        )
+    except asyncio.TimeoutError as exc:
+        # The wrapped analyze_telemetry_offline raised asyncio.TimeoutError
+        # directly (e.g., when patched in tests). Return a 504 with a
+        # structured timeout detail rather than letting it propagate.
+        return JSONResponse(
+            status_code=504,
+            content={
+                "detail": "Agent analysis timed out.",
+                "execution_status": "timeout",
+            },
+        )
+    except AgentAnalysisError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "Agent analysis failed.",
+                "execution_status": "failed",
+            },
+        )

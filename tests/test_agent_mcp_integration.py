@@ -30,6 +30,8 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from pydantic import PrivateAttr
+import pytest
+from fastapi.testclient import TestClient
 
 # Ensure the repository root is importable when the test file is run directly
 # or from a different working directory.
@@ -38,6 +40,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.agents.agent import diagnose_network, mcp_toolset, root_agent  # noqa: E402
+from app.api.agent import AgentAnalysisError
+from app.main import app
 
 
 APP_NAME = "agentic_netops_mcp_integration"
@@ -344,3 +348,95 @@ def test_agent_mcp_tool_discovery():
     assert "check_device_health" in names, (
         f"check_device_health not exposed by McpToolset; saw {names}"
     )
+
+
+# ============================================================
+# Endpoint tests for /analyze/demo
+# ==========================================================
+
+DEMO_TELEMETRY = {
+    "device_id": "demo-router",
+    "interface": "GigabitEthernet0/1",
+    "timestamp": "2026-08-16T21:00:00Z",
+    "cpu_percent": 95,
+    "memory_percent": 60,
+    "bandwidth_mbps": 900,
+    "packet_loss_percent": 5,
+    "latency_ms": 180,
+    "interface_status": "up",
+}
+
+EXPECTED_DEMO_DEVICE_ID = "demo-router"
+EXPECTED_DEMO_STATUS = "degraded"
+EXPECTED_DEMO_ANOMALIES = ["high_cpu", "high_packet_loss", "high_latency"]
+
+
+def _call_analyze_endpoint(telemetry: dict):
+    client = TestClient(app)
+    return client.post("/analyze/demo", json=telemetry)
+
+
+def test_agent_mcp_integration_endpoint():
+    """POST /analyze/demo executes real MCP tool via real stdio subprocess."""
+    response = _call_analyze_endpoint(DEMO_TELEMETRY)
+
+    assert response.status_code == 200, f"Unexpected status: {response.status_code}"
+
+    data = response.json()
+    assert data["device_id"] == EXPECTED_DEMO_DEVICE_ID
+    assert data["interface"] == DEMO_TELEMETRY["interface"]
+    assert data["execution_mode"] == "offline_demo"
+    assert data["tool_invoked"] is True
+    assert data["tool_name"] == "check_device_health"
+    assert data["tool_arguments"] == DEMO_TELEMETRY
+
+    payload = data["tool_result"]
+    assert payload is not None
+    assert payload.get("device_id") == EXPECTED_DEMO_DEVICE_ID
+    assert payload.get("status") == EXPECTED_DEMO_STATUS
+    assert payload.get("anomalies") == EXPECTED_DEMO_ANOMALIES
+
+    final = data["final_agent_response"]
+    assert final is not None
+    assert EXPECTED_DEMO_DEVICE_ID in final
+    assert EXPECTED_DEMO_STATUS in final
+
+
+def test_agent_mcp_integration_endpoint_timeout(monkeypatch):
+    """A blocked model triggers timeout; execution_status is 'timeout'."""
+
+    async def blocking_analyze(telemetry):
+        await asyncio.sleep(10)
+        raise asyncio.TimeoutError()
+
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module, "analyze_telemetry_offline", blocking_analyze)
+
+    try:
+        response = _call_analyze_endpoint(DEMO_TELEMETRY)
+        assert response.status_code == 504
+        data = response.json()
+        assert data["execution_status"] == "timeout"
+    finally:
+        monkeypatch.undo()
+
+
+def test_agent_mcp_integration_endpoint_error(monkeypatch):
+    """Agent error returns error status, not fabricated result."""
+
+    async def failing_analyze(telemetry):
+        raise AgentAnalysisError("check_device_health not available")
+
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module, "analyze_telemetry_offline", failing_analyze)
+
+    try:
+        response = _call_analyze_endpoint(DEMO_TELEMETRY)
+        assert response.status_code == 503
+        data = response.json()
+        assert data["detail"] == "Agent analysis failed."
+        assert data["execution_status"] == "failed"
+    finally:
+        monkeypatch.undo()

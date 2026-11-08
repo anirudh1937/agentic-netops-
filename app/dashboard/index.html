@@ -472,6 +472,33 @@
       font-size: 14px;
     }
 
+    /* ---- Offline MCP demo flow sequence ---- */
+    .flow-sequence {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .flow-step {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: #fbfcfd;
+      border: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .flow-step.flow-ok { border-left: 3px solid var(--ok); }
+    .flow-step.flow-bad { border-left: 3px solid var(--high); }
+    .flow-label { font-weight: 700; min-width: 150px; color: var(--text); }
+    .flow-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+    .flow-dot.ok { background: var(--ok); }
+    .flow-dot.bad { background: var(--high); }
+    .flow-detail { color: var(--muted); overflow-wrap: anywhere; }
+    .result-badge { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; padding: 4px 12px; border-radius: 999px; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+    .result-badge .badge.ok { background: var(--ok-bg); color: var(--ok); }
+    .result-badge .badge.neutral { background: var(--neutral-bg); color: var(--neutral); }
+
     .divider { height: 1px; background: var(--line); margin: 16px 0; border: 0; }
 
     /* ---- Responsive ---- */
@@ -749,11 +776,28 @@
               </div>
             </section>
             <section class="panel">
-              <div class="section-head"><h3>MCP Transparency</h3></div>
+              <div class="section-head"><h3>Offline MCP Demo</h3></div>
               <div class="content">
-                <div class="evidence-block">
-                  <p>The ADK agent has access to the MCP <code>check_device_health</code> tool and real offline stdio execution is covered by project tests.</p>
-                  <p class="hint">This demo page does <em>not</em> invoke MCP directly. It calls <code>/diagnose</code> (deterministic rule engine) only.</p>
+                <div class="field">
+                  <label for="demo-mcp-scenario">Synthetic telemetry scenario</label>
+                  <select id="demo-mcp-scenario">
+                    <option value="a">A. Healthy network (normal)</option>
+                    <option value="b">B. High CPU (degraded)</option>
+                    <option value="c">C. Packet loss + latency (degraded)</option>
+                    <option value="d">D. Interface down (degraded)</option>
+                  </select>
+                </div>
+                <div class="actions" style="margin-top:12px;">
+                  <button class="primary" id="demo-mcp-run-btn" type="button">Run Offline MCP Demo</button>
+                </div>
+                <div id="demo-mcp-notice" class="notice" style="margin-top:10px;"></div>
+                <div id="demo-mcp-output" style="margin-top:16px;">
+                  <div class="state">Run the demo to observe the ADK-to-MCP execution path.</div>
+                </div>
+                <div class="hint" style="margin-top:10px; font-size:12px;">
+                  <strong>Offline scripted ADK–MCP demonstration.</strong> Uses a deterministic fake model
+                  with the real MCP stdio tool (<code>check_device_health</code>), not autonomous Gemini reasoning.
+                  No external services are contacted.
                 </div>
               </div>
             </section>
@@ -1844,6 +1888,114 @@
       }
     }
 
+    // ==========================================================
+    //  View: Offline MCP Demo (ADK -> real MCP stdio tool)
+    // ==========================================================
+    async function runOfflineMcpeDemo() {
+      const sel = els("demo-mcp-scenario");
+      const scenario = DEMO_SCENARIOS[sel.value];
+      if (!scenario) return;
+
+      const btn = els("demo-mcp-run-btn");
+      const out = els("demo-mcp-output");
+      const notice = els("demo-mcp-notice");
+      clearNotice("demo-mcp-notice");
+
+      setBusy(btn, true, "Running demo…");
+      out.innerHTML = `<div class="state">Running offline ADK-to-MCP demonstration&hellip;</div>`;
+
+      try {
+        const result = await postJson("/analyze/demo", scenario.telemetry);
+        renderOfflineMcpeResult(result, scenario.telemetry);
+        showToast("demo-mcp-notice", "Offline MCP demo complete.", "success");
+      } catch (err) {
+        const status = err.status || 0;
+        out.innerHTML = `
+          <div class="state"><div class="lead">Demo request failed</div>
+            <span class="hint">HTTP ${status}: ${esc(err.message || "Unknown error")}</span></div>
+        `;
+        showToast("demo-mcp-notice", "Demo failed: " + err.message, "error");
+      } finally {
+        setBusy(btn, false);
+      }
+    }
+
+    function renderOfflineMcpeResult(result, telemetry) {
+      const status = result.execution_status || "unknown";
+      const ok = status === "completed";
+      const wrap = els("demo-mcp-output");
+
+      const flowSteps = [
+        { label: "Telemetry", detail: `${esc(result.device_id)} · ${esc(result.interface)}`, ok: true },
+        { label: "ADK Runner", detail: "Synthetic telemetry sent to offline demo agent", ok: true },
+        { label: "FunctionCall", detail: `check_device_health (id: ${result.tool_name ? "offline-demo-call-1" : "—"})`, ok: result.tool_invoked === true },
+        { label: "MCP Tool", detail: `check_device_health via real stdio subprocess`, ok: result.tool_invoked === true },
+        { label: "FunctionResponse", detail: result.tool_result ? "MCP result delivered to model" : "No tool result received", ok: result.tool_result !== null && result.tool_result !== undefined },
+        { label: "Final Agent Response", detail: result.final_agent_response || "(none)", ok: ok && !!result.final_agent_response },
+      ];
+
+      const flowHtml = flowSteps.map((s) => `
+        <div class="flow-step ${s.ok ? "flow-ok" : "flow-bad"}">
+          <span class="flow-label">${esc(s.label)}</span>
+          <span class="flow-dot ${s.ok ? "ok" : "bad"}"></span>
+          <span class="flow-detail">${esc(s.detail)}</span>
+        </div>`).join("");
+
+      const toolResultHtml = result.tool_result
+        ? Object.entries(result.tool_result).map(([k, v]) =>
+            `<tr><td><b>${esc(k)}</b></td><td>${esc(String(v))}</td></tr>`
+          ).join("")
+        : `<tr><td colspan="2" class="hint">No MCP tool result returned.</td></tr>`;
+
+      wrap.innerHTML = `
+        <div class="result-badge ${ok ? "badge ok" : "badge neutral"}">
+          Execution status: <strong>${esc(status)}</strong>
+        </div>
+        <div class="flow-sequence" style="margin:12px 0;">
+          <div class="section-head"><h4 style="margin:0 0 6px;font-size:13px;">Execution sequence</h4></div>
+          ${flowHtml}
+        </div>
+        <div class="grid cols-2" style="margin-top:14px;">
+          <section class="panel">
+            <div class="section-head"><h4>Request (sent to /analyze/demo)</h4></div>
+            <div class="content">
+              <table class="wide">
+                <thead><tr><th>Field</th><th>Value</th></tr></thead>
+                <tbody>
+                  <tr><td><b>device_id</b></td><td>${esc(telemetry.device_id)}</td></tr>
+                  <tr><td><b>interface</b></td><td>${esc(telemetry.interface)}</td></tr>
+                  <tr><td><b>cpu_percent</b></td><td>${esc(String(telemetry.cpu_percent))}</td></tr>
+                  <tr><td><b>memory_percent</b></td><td>${esc(String(telemetry.memory_percent))}</td></tr>
+                  <tr><td><b>bandwidth_mbps</b></td><td>${esc(String(telemetry.bandwidth_mbps))}</td></tr>
+                  <tr><td><b>packet_loss_percent</b></td><td>${esc(String(telemetry.packet_loss_percent))}</td></tr>
+                  <tr><td><b>latency_ms</b></td><td>${esc(String(telemetry.latency_ms))}</td></tr>
+                  <tr><td><b>interface_status</b></td><td>${esc(telemetry.interface_status)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="section-head"><h4>Tool execution evidence</h4></div>
+            <div class="content">
+              <table class="wide">
+                <thead><tr><th>Field</th><th>Value</th></tr></thead>
+                <tbody>
+                  <tr><td><b>tool_invoked</b></td><td>${String(result.tool_invoked)}</td></tr>
+                  <tr><td><b>tool_name</b></td><td>${esc(String(result.tool_name))}</td></tr>
+                  <tr><td><b>tool_arguments</b></td><td><pre style="margin:0;font-size:12px;">${esc(JSON.stringify(result.tool_arguments, null, 2))}</pre></td></tr>
+                  ${toolResultHtml}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+        <div class="evidence-block" style="margin-top:14px;">
+          <h4 style="margin:0 0 8px;font-size:13px;">Final agent response</h4>
+          <div class="analysis" style="margin:0;">${esc(result.final_agent_response || "(no response text)")}</div>
+        </div>
+      `;
+    }
+
     function init() {
       // Navigation
       $$(".nav-item").forEach((btn) => {
@@ -1873,6 +2025,9 @@
 
       // Demo diagnosis
       els("demo-run-btn").addEventListener("click", runDemoDiagnosis);
+
+      // Offline MCP demo
+      els("demo-mcp-run-btn").addEventListener("click", runOfflineMcpeDemo);
 
       // Alerts
       els("alerts-fetch-btn").addEventListener("click", refreshAlerts);

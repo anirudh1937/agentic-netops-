@@ -30,6 +30,8 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from pydantic import PrivateAttr
+import pytest
+from fastapi.testclient import TestClient
 
 # Ensure the repository root is importable when the test file is run directly
 # or from a different working directory.
@@ -39,6 +41,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.agents.agent import diagnose_network, mcp_toolset, root_agent  # noqa: E402
 from app.api.agent import AgentAnalysisError
+from app.main import app
 
 
 APP_NAME = "agentic_netops_mcp_integration"
@@ -412,7 +415,7 @@ def test_agent_mcp_integration_endpoint_timeout(monkeypatch):
 
     try:
         response = _call_analyze_endpoint(DEMO_TELEMETRY)
-        assert response.status_code == 200
+        assert response.status_code == 504
         data = response.json()
         assert data["execution_status"] == "timeout"
     finally:
@@ -431,6 +434,9 @@ def test_agent_mcp_integration_endpoint_error(monkeypatch):
 
     try:
         response = _call_analyze_endpoint(DEMO_TELEMETRY)
-        assert response.status_code == 500
+        assert response.status_code == 503
+        data = response.json()
+        assert data["detail"] == "Agent analysis failed."
+        assert data["execution_status"] == "failed"
     finally:
         monkeypatch.undo()

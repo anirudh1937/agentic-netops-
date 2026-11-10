@@ -4,3 +4,8 @@ pytest==8.4.2
 httpx
 mcp==1.29.1
 google-adk==2.7.1
+sqlalchemy==2.1.8
+alembic==1.20.1
+asyncpg==0.32.0
+greenlet==3.5.6
+aiosqlite==0.22.1

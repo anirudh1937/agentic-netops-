@@ -33,6 +33,7 @@ from app.connectors import (
     available_vendors,
     make_connector,
 )
+from app.db.session import dispose_db, init_db
 from app.diagnosis import DiagnosisResult, diagnose_network_issue
 from app.freshness import assess_freshness, read_stale_threshold_seconds
 from app.inventory import Vendor
@@ -43,20 +44,32 @@ from app.telemetry_store import TelemetryStore
 logger = logging.getLogger(__name__)
 
 
+def _database_configured() -> bool:
+    """Return whether a database URL is configured for this process."""
+
+    return bool(os.environ.get("NETOPS_DATABASE_URL"))
+
+
 @asynccontextmanager
 async def app_lifespan(app: FastAPI):
-    """Application lifespan for telemetry store and poller.
+    """Application lifespan for telemetry, MCP, and database resources.
 
     Creates one application-owned :class:`TelemetryStore` and builds a
     :class:`TelemetryPoller` from environment configuration via
     :func:`TelemetryPoller.from_config`. Polling is disabled by default and is
     only started when ``NETOPS_POLL_ENABLED`` is set to a truthy value.
 
+    If ``NETOPS_DATABASE_URL`` is configured, the existing database engine and
+    session factory are initialized without creating tables or opening a
+    connection proactively. If it is unset, the application remains fully
+    usable for non-database functionality.
+
     The store and poller are attached to ``app.state`` so the
     ``GET /telemetry/latest`` endpoint can read stored readings without
     initiating any poll or network call.
 
-    On shutdown, the poller is stopped cleanly if it was started.
+    On shutdown, the poller is stopped cleanly if it was started, the shared
+    MCP toolset is closed, and initialized database resources are disposed.
     """
 
     store = TelemetryStore()
@@ -68,14 +81,25 @@ async def app_lifespan(app: FastAPI):
     # operator-configured threshold. Invalid values fall back to the default.
     app.state.telemetry_stale_threshold_seconds = read_stale_threshold_seconds()
 
+    database_configured = _database_configured()
+    startup_complete = False
+
     try:
+        # Initialize only when explicitly configured. This creates the engine
+        # and session factory but does not connect or create tables; schema
+        # management remains an Alembic responsibility.
+        if database_configured:
+            await init_db()
+
         if poller.enabled:
             await poller.start()
+
+        startup_complete = True
         yield
     finally:
         # Shutdown cleanup operations are independent: failure of one must not
-        # prevent the other. Capture the poller shutdown error so it can be
-        # re-raised after MCP cleanup is attempted.
+        # prevent the others. Capture the poller and database shutdown errors
+        # so they can be re-raised after all cleanup is attempted.
         poller_stop_error = None
         if poller.is_running:
             try:
@@ -91,10 +115,22 @@ async def app_lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001 - log and continue shutdown
             logger.warning("MCP toolset shutdown failed", exc_info=True)
 
-        # Re-raise the original poller shutdown error so it is not hidden by
-        # MCP cleanup.
-        if poller_stop_error is not None:
-            raise poller_stop_error
+        database_stop_error = None
+        if database_configured:
+            try:
+                await dispose_db()
+            except Exception as exc:  # noqa: BLE001 - log and continue shutdown
+                database_stop_error = exc
+                logger.warning("Database shutdown failed", exc_info=True)
+
+        # Do not let cleanup errors replace a startup failure. On a normal
+        # shutdown, preserve the existing poller-error precedence, then
+        # surface a database disposal error if no poller error occurred.
+        if startup_complete:
+            if poller_stop_error is not None:
+                raise poller_stop_error
+            if database_stop_error is not None:
+                raise database_stop_error
 
 
 def _polling_enabled() -> bool:

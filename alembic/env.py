@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # Import the SQLAlchemy Base and models so Alembic can detect table
 # definitions for autogeneration.
 from app.db.models import Base  # noqa: F401
+from app.auth.models import Session  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

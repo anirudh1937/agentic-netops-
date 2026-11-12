@@ -171,6 +171,11 @@ class OrganizationMembership(Base):
             "user_id",
             name="uq_organization_memberships_organization_id_user_id",
         ),
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_organization_memberships_organization_id_id",
+        ),
     )
 
     def __repr__(self) -> str:

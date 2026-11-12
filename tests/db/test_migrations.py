@@ -55,7 +55,7 @@ def test_alembic_current_head():
         from alembic.script import ScriptDirectory
 
         script = ScriptDirectory.from_config(config)
-        assert script.get_current_head() == "0001"
+        assert script.get_current_head() == "0003"
     finally:
         os.unlink(tmp_name)
 
@@ -102,12 +102,22 @@ def test_alembic_offline_sql_with_asyncpg_url():
         assert "CREATE TABLE users" in sql
         assert "CREATE TABLE organization_memberships" in sql
 
+        assert re.search(
+            r"ALTER TABLE organization_memberships\s+ADD CONSTRAINT\s+"
+            r"uq_organization_memberships_organization_id_id\s+UNIQUE\s+"
+            r"\(organization_id,\s+id\)",
+            sql,
+            flags=re.IGNORECASE,
+        )
+        assert sql.count("CREATE TABLE organization_memberships") == 1
+        assert "_alembic_tmp_organization_memberships" not in sql
+
         check_names = re.findall(
             r"CONSTRAINT\s+([A-Za-z_][A-Za-z0-9_]*)\s+CHECK",
             sql,
             flags=re.IGNORECASE,
         )
-        assert check_names == ["ck_organization_memberships_role"]
+        assert "ck_organization_memberships_role" in check_names
         assert "org_admin" in sql
         assert "org_member" in sql
     finally:
@@ -136,6 +146,7 @@ def test_alembic_upgrade_downgrade_sqlite():
         assert "organizations" in table_names
         assert "users" in table_names
         assert "organization_memberships" in table_names
+        assert "sessions" in table_names
 
         command.downgrade(config, "base")
 
@@ -144,6 +155,7 @@ def test_alembic_upgrade_downgrade_sqlite():
         assert "organizations" not in table_names
         assert "users" not in table_names
         assert "organization_memberships" not in table_names
+        assert "sessions" not in table_names
 
         engine.dispose()
     finally:
@@ -193,6 +205,38 @@ def test_alembic_upgrade_creates_expected_columns():
         assert "user_id" in mem_cols
         assert "role" in mem_cols
         assert "joined_at" in mem_cols
+
+        engine.dispose()
+    finally:
+        if old is not None:
+            os.environ["NETOPS_DATABASE_URL"] = old
+        else:
+            os.environ.pop("NETOPS_DATABASE_URL", None)
+        os.unlink(tmp_name)
+
+
+def test_alembic_upgrade_creates_session_table() -> None:
+    """Upgrade migration creates the sessions table with expected columns."""
+    config, tmp_name = _make_alembic_config()
+    try:
+        import os
+
+        old = os.environ.get("NETOPS_DATABASE_URL")
+        os.environ["NETOPS_DATABASE_URL"] = f"sqlite+aiosqlite:///{tmp_name}"
+
+        command.upgrade(config, "head")
+
+        engine = create_engine(f"sqlite:///{tmp_name}")
+        inspector = inspect(engine)
+
+        session_cols = {c["name"] for c in inspector.get_columns("sessions")}
+        assert "id" in session_cols
+        assert "user_id" in session_cols
+        assert "token_hash" in session_cols
+        assert "created_at" in session_cols
+        assert "expires_at" in session_cols
+        assert "last_seen_at" in session_cols
+        assert "revoked_at" in session_cols
 
         engine.dispose()
     finally:

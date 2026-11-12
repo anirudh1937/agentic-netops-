@@ -100,6 +100,17 @@ def test_organization_membership_model_columns():
     ]
     assert len(unique_constraints) == 1
 
+    composite_key_constraints = [
+        c
+        for c in mapper.tables[0].constraints
+        if getattr(c, "name", None)
+        == "uq_organization_memberships_organization_id_id"
+    ]
+    assert len(composite_key_constraints) == 1
+    assert [
+        column.name for column in composite_key_constraints[0].columns
+    ] == ["organization_id", "id"]
+
 
 def test_organization_relationships():
     """Organization has relationship to memberships."""

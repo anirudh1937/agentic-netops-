@@ -1,6 +1,6 @@
 """Database-level tests for organization membership role enforcement.
 
-These tests apply Alembic revision 0001 to a temporary SQLite database and
+These tests apply the current Alembic head to a temporary SQLite database and
 verify both accepted and rejected role values through SQL, not through
 application-level validation.
 """

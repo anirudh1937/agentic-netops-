@@ -1,9 +1,9 @@
-"""Schema consistency between SQLAlchemy metadata and Alembic revision 0001.
+"""Schema consistency between SQLAlchemy metadata and the current Alembic head.
 
-The test applies the initial migration to a temporary SQLite database and
-compares the resulting schema against ``Base.metadata`` using Alembic's
-autogenerate comparison. It fails on any difference that is not an explicitly
-documented SQLite UUID reflection artifact.
+The test applies all migrations to a temporary SQLite database and compares
+the resulting schema against ``Base.metadata`` using Alembic's autogenerate
+comparison. It fails on any difference that is not an explicitly documented
+SQLite UUID reflection artifact.
 """
 
 from __future__ import annotations
@@ -19,12 +19,17 @@ from sqlalchemy import String, create_engine
 from app.db.models import Base
 from app.db.types import GUID
 
+# Import auth models so that Base.metadata includes session tables
+from app.auth.models import Session  # noqa: F401
+
 UUID_COLUMNS = {
     ("organizations", "id"),
     ("users", "id"),
     ("organization_memberships", "id"),
     ("organization_memberships", "organization_id"),
     ("organization_memberships", "user_id"),
+    ("sessions", "id"),
+    ("sessions", "user_id"),
 }
 
 
